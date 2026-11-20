@@ -1,6 +1,9 @@
 import Cookies from 'js-cookie';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === 'production'
+    ? 'https://amzur-lead-engine-api.vercel.app'
+    : 'http://localhost:3001');
 
 // Get auth token from cookie
 export const getToken = () => {
