@@ -15,10 +15,6 @@ export const authenticateToken = (
   res: Response,
   next: NextFunction
 ) => {
-  if (req.method === 'GET') {
-    return next();
-  }
-
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 

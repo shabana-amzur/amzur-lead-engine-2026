@@ -2,7 +2,7 @@
 
 import { use } from 'react';
 import useSWR from 'swr';
-import { leadsAPI } from '@/lib/api';
+import { authAPI, leadsAPI } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 
 export default function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -14,12 +14,20 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
     () => leadsAPI.getById(id)
   );
 
+  const handleLogout = () => {
+    authAPI.logout();
+    router.push('/login');
+  };
+
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50">
         <header className="bg-white shadow">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
             <h1 className="text-2xl font-bold text-gray-900">Amzur Lead Engine</h1>
+            <button onClick={handleLogout} className="text-gray-600 hover:text-gray-900">
+              Logout
+            </button>
           </div>
         </header>
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -50,8 +58,11 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
           <h1 className="text-2xl font-bold text-gray-900">Amzur Lead Engine</h1>
+          <button onClick={handleLogout} className="text-gray-600 hover:text-gray-900">
+            Logout
+          </button>
         </div>
       </header>
 
