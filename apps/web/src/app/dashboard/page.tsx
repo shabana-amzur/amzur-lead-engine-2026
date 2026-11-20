@@ -1,14 +1,13 @@
 'use client';
 
 import useSWR from 'swr';
-import { leadsAPI, scanAPI, authAPI } from '@/lib/api';
+import { leadsAPI, scanAPI } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 export default function DashboardPage() {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState('all');
-  const [scanLoading, setScanLoading] = useState(false);
 
   // Fetch all leads
   const { data: leadsData, error: leadsError, mutate: refreshLeads } = useSWR(
@@ -21,24 +20,6 @@ export default function DashboardPage() {
 
   // Fetch scan history
   const { data: historyData } = useSWR('/api/scan/history', () => scanAPI.getHistory({ limit: 5 }));
-
-  const handleLogout = () => {
-    authAPI.logout();
-    router.push('/login');
-  };
-
-  const handleTriggerScan = async () => {
-    setScanLoading(true);
-    try {
-      await scanAPI.trigger();
-      alert('Discovery scan started! This will take 1-2 minutes. Click "Refresh Results" after completion.');
-      setTimeout(() => refreshLeads(), 120000); // Refresh after 2 minutes
-    } catch (error: any) {
-      alert('Failed to start scan: ' + error.message);
-    } finally {
-      setScanLoading(false);
-    }
-  };
 
   const leads = leadsData?.leads || [];
   
@@ -78,22 +59,6 @@ export default function DashboardPage() {
     };
     return badges[lob] || 'bg-gray-100 text-gray-800';
   };
-
-  if (leadsError) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-red-600 mb-4">Failed to load dashboard</p>
-          <button
-            onClick={handleLogout}
-            className="text-primary-600 hover:text-primary-700"
-          >
-            Back to Login
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   const latestScan = scanData?.scan;
   const scanHistory = historyData?.scans || [];
@@ -176,13 +141,6 @@ export default function DashboardPage() {
             </div>
             <div className="flex gap-2">
               <button
-                onClick={handleTriggerScan}
-                disabled={scanLoading}
-                className="px-4 py-2 text-sm border border-blue-500 text-blue-600 rounded-md bg-white hover:bg-blue-50 disabled:opacity-50 flex items-center gap-2"
-              >
-                <span>🚀</span> {scanLoading ? 'Running...' : 'Run Discovery'}
-              </button>
-              <button
                 onClick={() => {
                   refreshLeads();
                   window.location.reload();
@@ -191,14 +149,14 @@ export default function DashboardPage() {
               >
                 <span>🔄</span> Refresh Results
               </button>
-              <button
-                onClick={handleLogout}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2"
-              >
-                <span>⬇️</span> Logout
-              </button>
             </div>
           </div>
+
+          {leadsError && (
+            <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              Lead data is currently unavailable. The dashboard remains accessible; try refreshing later.
+            </p>
+          )}
 
           {/* Metrics */}
           <div className="grid grid-cols-5 gap-3 mb-5">
@@ -260,8 +218,10 @@ export default function DashboardPage() {
               </div>
             </div>
             
-            {!leadsData ? (
+            {!leadsData && !leadsError ? (
               <div className="p-8 text-center text-gray-500">Loading leads...</div>
+            ) : leadsError ? (
+              <div className="p-8 text-center text-gray-500">Lead data is unavailable.</div>
             ) : filteredLeads.length === 0 ? (
               <div className="p-8 text-center text-gray-500">No leads found</div>
             ) : (

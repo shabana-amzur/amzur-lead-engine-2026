@@ -40,15 +40,9 @@ export default function HomePage() {
         <div className="text-center mt-12">
           <a
             href="/dashboard"
-            className="inline-block bg-primary-600 text-white px-8 py-3 rounded-lg font-semibold hover:bg-primary-700 transition-colors mr-4"
+            className="inline-block bg-primary-600 text-white px-8 py-3 rounded-lg font-semibold hover:bg-primary-700 transition-colors"
           >
             Go to Dashboard
-          </a>
-          <a
-            href="/login"
-            className="inline-block bg-white text-primary-600 px-8 py-3 rounded-lg font-semibold hover:bg-gray-50 transition-colors border-2 border-primary-600"
-          >
-            Sign In
           </a>
         </div>
       </div>

@@ -33,12 +33,11 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   res.status(500).json({ error: 'Something went wrong!' });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 API Server running on http://localhost:${PORT}`);
-  
-  // Start the cron scheduler
-  startScheduler();
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`API Server running on http://localhost:${PORT}`);
+    startScheduler();
+  });
+}
 
 export default app;
