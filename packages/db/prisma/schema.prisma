@@ -1,0 +1,52 @@
+// This is your Prisma schema file
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model Lead {
+  id                  String   @id @default(cuid())
+  companyName         String
+  industry            String?
+  website             String?
+  employees           Int?
+  revenue             Float?
+  hq                  String?
+  lob                 String?
+  intentSignal        String?
+  recommendedService  String?
+  leadScore           Int?
+  source              String?
+  discoveredAt        DateTime @default(now())
+  signals             Json?
+  outreachEmail       String?
+
+  @@index([companyName])
+  @@index([industry])
+  @@index([leadScore])
+  @@index([discoveredAt])
+}
+
+model ScanRun {
+  id               String    @id @default(cuid())
+  startedAt        DateTime  @default(now())
+  completedAt      DateTime?
+  companiesScanned Int       @default(0)
+  newLeadsFound    Int       @default(0)
+  sources          Json?
+
+  @@index([startedAt])
+}

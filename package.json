@@ -1,0 +1,30 @@
+{
+  "name": "amzur-lead-engine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Amzur Lead Engine - Full-stack lead discovery platform",
+  "packageManager": "npm@10.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "start": "turbo run start",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean",
+    "db:migrate": "turbo run db:migrate",
+    "db:generate": "turbo run db:generate",
+    "db:push": "turbo run db:push"
+  },
+  "devDependencies": {
+    "turbo": "^2.9.17"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "next": "^16.2.9"
+  }
+}
