@@ -1,9 +1,14 @@
 import Cookies from 'js-cookie';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ||
-  (process.env.NODE_ENV === 'production'
-    ? 'https://amzur-lead-engine-api.vercel.app'
-    : 'http://localhost:3001');
+const PRODUCTION_API_URL = 'https://amzur-lead-engine-api.vercel.app';
+const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL;
+
+// A localhost API URL can never work for visitors of the deployed site, so
+// ignore one that leaks into a production build and use the live API instead.
+const API_URL =
+  process.env.NODE_ENV === 'production'
+    ? (configuredApiUrl && !configuredApiUrl.includes('localhost') ? configuredApiUrl : PRODUCTION_API_URL)
+    : (configuredApiUrl || 'http://localhost:3001');
 
 // Get auth token from cookie
 export const getToken = () => {
