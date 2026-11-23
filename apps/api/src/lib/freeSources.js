@@ -1,7 +1,5 @@
-// Free lead sources that need no search credits:
-// - Google News RSS: recent news/press releases for a buyer-phrased query.
-// - SAM.gov Opportunities API: US government tenders/RFPs (needs a free
-//   SAM_GOV_API_KEY from sam.gov; skipped without one).
+// Free lead source that needs no search credits:
+// Google News RSS: recent news/press releases for a buyer-phrased query.
 // Results use the same shape as web search results plus extra fields.
 const axios = require('axios');
 
@@ -55,55 +53,4 @@ async function searchNews(query, { days = 45, max = 15 } = {}) {
   });
 }
 
-const formatSamDate = (date) =>
-  `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}/${date.getFullYear()}`;
-
-// "VETERANS AFFAIRS, DEPARTMENT OF.VETERANS HEALTH ADMINISTRATION" -> "Veterans Health Administration"
-function agencyName(fullPath) {
-  const parts = (fullPath || '').split('.').map((part) => part.trim()).filter(Boolean);
-  const name = parts[parts.length - 1] || parts[0] || 'Government agency';
-  const reordered = name.replace(/^(.+), (DEPARTMENT|OFFICE|BUREAU) OF$/i, '$2 of $1');
-  return reordered
-    .toLowerCase()
-    .replace(/\b([a-z])/g, (c) => c.toUpperCase())
-    .replace(/\b(Of|And|The|For)\b/g, (w) => w.toLowerCase());
-}
-
-/**
- * SAM.gov opportunities posted in the last `days` days for an IT NAICS code.
- * Returns [] when SAM_GOV_API_KEY is not set.
- */
-async function searchTenders({ naics, days = 14, limit = 100 } = {}) {
-  if (!process.env.SAM_GOV_API_KEY) return [];
-  const to = new Date();
-  const from = new Date(Date.now() - days * 86400000);
-  const { data } = await axios.get('https://api.sam.gov/opportunities/v2/search', {
-    params: {
-      api_key: process.env.SAM_GOV_API_KEY,
-      postedFrom: formatSamDate(from),
-      postedTo: formatSamDate(to),
-      ncode: naics,
-      limit,
-    },
-    headers: HEADERS,
-    timeout: TIMEOUT_MS,
-  });
-  return (data.opportunitiesData || [])
-    .filter((o) => o.active !== 'No')
-    .filter((o) => !o.responseDeadLine || new Date(o.responseDeadLine).getTime() > Date.now())
-    .map((o) => ({
-      title: o.title,
-      url: o.uiLink || `https://sam.gov/opp/${o.noticeId}/view`,
-      content: [o.title, agencyName(o.fullParentPathName), o.type].filter(Boolean).join(' · '),
-      published_date: o.postedDate ? new Date(o.postedDate).toISOString() : null,
-      provider: 'sam',
-      agency: agencyName(o.fullParentPathName),
-      solicitationNumber: o.solicitationNumber || null,
-      noticeType: o.type || null,
-      responseDeadline: o.responseDeadLine || null,
-      naics: o.naicsCode || naics,
-      placeOfPerformance: [o.placeOfPerformance?.city?.name, o.placeOfPerformance?.state?.code].filter(Boolean).join(', ') || null,
-    }));
-}
-
-module.exports = { searchNews, searchTenders, agencyName };
+module.exports = { searchNews };

@@ -8,7 +8,7 @@ import { findCompanyProfile } from '../lib/companyProfile';
 import { classifyLinkedInPost } from '../lib/linkedinFilters';
 import { findRequirementDetails } from '../lib/requirementDetails';
 import { searchWeb } from '../lib/searchProviders';
-import { searchNews, searchTenders } from '../lib/freeSources';
+import { searchNews } from '../lib/freeSources';
 
 // OpenAI client for scoreWithOpenAI (not yet used by the scan). Created only
 // when a key is configured: constructing it without one throws, which would
@@ -31,12 +31,6 @@ const SEARCHES = [
     lob: 'Cloud',
     service: 'Cloud Migration Services',
     intent: 'Cloud migration initiative',
-  },
-  {
-    query: 'site:sam.gov "cloud migration" RFP 2026',
-    lob: 'Cloud',
-    service: 'Cloud Migration Services',
-    intent: 'RFP for cloud migration',
   },
   // ERP
   {
@@ -228,9 +222,6 @@ const SEARCHES = [
     lob: 'Offshore',
     intent: 'Opening an India technology center (news)',
   },
-  // SAM.gov: US government tenders for IT services (needs SAM_GOV_API_KEY).
-  { kind: 'sam', query: 'SAM.gov NAICS 541512 (computer systems design)', naics: '541512', lob: 'auto' },
-  { kind: 'sam', query: 'SAM.gov NAICS 541511 (custom programming)', naics: '541511', lob: 'auto' },
 ];
 
 // Amzur service recommended for each line of business.
@@ -406,7 +397,7 @@ let lastSearchError = null;
 // 'basic' depth costs 1 credit per search vs 2 for 'advanced'; snippets are
 // shorter but enough to identify the company and signal.
 async function searchWithTavily(query, depth = 'basic') {
-  // Tries Tavily, then Serper, then Brave (whichever have API keys set).
+  // Tries Tavily, then Serper (whichever have API keys set).
   const { results, provider, errors } = await searchWeb(query, { depth, maxResults: 10 });
   if (!provider && errors.length) {
     const last = errors[errors.length - 1];
@@ -439,7 +430,7 @@ function extractCompanyName(result) {
     const atMatch = result.title.match(/at\s+([A-Z][a-zA-Z0-9\s&]+?)(?:\s*[-|]|$)/);
     if (atMatch) return atMatch[1].trim();
     
-    const dashMatch = result.title.match(/^([A-Z][a-zA-Z0-9\s&]+?)\s*[-–]/);
+    const dashMatch = result.title.match(/^([A-Z][a-zA-Z0-9\s&]+?)\s*[-–|]/);
     if (dashMatch) return dashMatch[1].trim();
   }
   
@@ -447,7 +438,7 @@ function extractCompanyName(result) {
   if (domain?.includes('techcrunch') || domain?.includes('businesswire') || domain?.includes('prnewswire')) {
     // Title format: "Stripe raises $600M Series H" or "Acme Corp announces..."
     const companyMatch = result.title.match(/^([A-Z][a-zA-Z0-9\s&.]+?)(?:\s+(?:raises|announces|secures|closes|launches|unveils|selects|chooses|implements|completes|migrates|moves|opens|expands|establishes|partners|deploys|goes live))/i);
-    if (companyMatch) return companyMatch[1].trim();
+    if (companyMatch) return companyMatch[1].replace(/^[A-Z][A-Za-z.\s-]{1,30}?[- ]based\s+/i, '').trim();
   }
   
   // For career pages
@@ -555,26 +546,8 @@ function companyFromHeadline(title, extraVerbs) {
   return name;
 }
 
-// Requirement details straight from a news item or tender (no page fetch).
-function feedRequirement(search, result) {
-  if (search.kind === 'sam') {
-    const deadline = result.responseDeadline ? new Date(result.responseDeadline) : null;
-    return {
-      kind: 'rfp',
-      headline: result.title,
-      facts: [
-        result.agency && { label: 'Agency', value: result.agency },
-        result.noticeType && { label: 'Notice', value: result.noticeType },
-        result.solicitationNumber && { label: 'Solicitation', value: result.solicitationNumber },
-        deadline && !Number.isNaN(deadline.getTime()) && { label: 'Response due', value: deadline.toISOString().slice(0, 10) },
-        result.placeOfPerformance && { label: 'Place', value: result.placeOfPerformance },
-        result.naics && { label: 'NAICS', value: result.naics },
-      ].filter(Boolean),
-      summary: null,
-      sections: [],
-      from: 'SAM.gov',
-    };
-  }
+// Requirement details straight from a news item (no page fetch).
+function feedRequirement(result) {
   return {
     kind: 'press',
     headline: result.title,
@@ -585,22 +558,9 @@ function feedRequirement(search, result) {
   };
 }
 
-// SAM.gov allows few API calls per day on a basic key: query at most every 6 hours.
-const SAM_INTERVAL_HOURS = 6;
-
-async function samDueForRun() {
-  if (!process.env.SAM_GOV_API_KEY) return false;
-  const recent = await prisma.scanRun.findMany({
-    where: { startedAt: { gte: new Date(Date.now() - SAM_INTERVAL_HOURS * 3600000) } },
-    select: { sources: true },
-  });
-  return !recent.some((run) => run.sources && Object.keys(run.sources).some((key) => key.startsWith('SAM.gov')));
-}
-
-async function fetchForSearch(search, samDue) {
+async function fetchForSearch(search) {
   try {
     if (search.kind === 'news') return await searchNews(search.query);
-    if (search.kind === 'sam') return samDue ? await searchTenders({ naics: search.naics }) : null;
   } catch (error) {
     console.error(`Free source error for "${search.query}":`, error.message);
     return [];
@@ -789,15 +749,13 @@ export async function discoverLeads() {
   lastSearchError = null;
 
   // Run all searches in parallel; Tavily latency dominates scan time.
-  const samDue = await samDueForRun().catch(() => false);
   const searchResults = await Promise.all(
-    SEARCHES.map(async (search) => ({ search, results: await fetchForSearch(search, samDue) }))
+    SEARCHES.map(async (search) => ({ search, results: await fetchForSearch(search) }))
   );
 
   for (const { search, results: fetched } of searchResults) {
     const { query } = search;
-    if (fetched === null) continue; // source skipped this scan (e.g. SAM.gov interval)
-    const results = fetched;
+    const results = fetched || [];
     sourcesBreakdown[query] = results.length;
     console.log(`\n🔎 [${search.kind || search.lob}] "${query}": ${results.length} results`);
 
@@ -813,9 +771,7 @@ export async function discoverLeads() {
       }
 
       const companyName =
-        search.kind === 'news' ? companyFromHeadline(result.title, search.headlineVerbs)
-        : search.kind === 'sam' ? result.agency
-        : extractCompanyName(result);
+        search.kind === 'news' ? companyFromHeadline(result.title, search.headlineVerbs) : extractCompanyName(result);
       if (!companyName) {
         console.log(`   ⏭️  Skipped: ${result.title} (no company name)`);
         continue;
@@ -832,9 +788,8 @@ export async function discoverLeads() {
         continue;
       }
 
-      // Hiring posts: name the role; tenders: the RFP title; otherwise the search's signal.
+      // Hiring posts: name the role; otherwise use the search's signal.
       let intentSignal = search.intent;
-      if (search.kind === 'sam') intentSignal = `RFP: ${(result.title || 'Government tender').slice(0, 80)}`;
       if (isJobBoard(domain)) {
         const role = result.title.match(ROLE_PATTERN);
         if (role) intentSignal = `Hiring ${role[0].trim()}`;
@@ -864,16 +819,15 @@ export async function discoverLeads() {
       // parallel with the rest of the scan; awaited after the loop.
       pendingSaves.push((async () => {
       try {
-        const fromFeed = search.kind === 'news' || search.kind === 'sam';
+        const fromFeed = search.kind === 'news';
         const [published, profile, requirement] = await Promise.all([
           fromFeed
             ? result.published_date
-              ? { date: result.published_date, method: search.kind === 'sam' ? 'SAM.gov' : `News feed (${result.publisher || 'Google News'})` }
+              ? { date: result.published_date, method: `News feed (${result.publisher || 'Google News'})` }
               : null
             : findPublishedDate(result.url, result.published_date),
-          // Government agencies have no company profile worth looking up.
-          search.kind === 'sam' ? null : findCompanyProfile(companyName, { industry, sourceUrl: result.url }).catch(() => null),
-          fromFeed ? feedRequirement(search, result) : findRequirementDetails(result.url, { companyName, title: result.title, text: result.content }).catch(() => undefined),
+          findCompanyProfile(companyName, { industry, sourceUrl: result.url }).catch(() => null),
+          fromFeed ? feedRequirement(result) : findRequirementDetails(result.url, { companyName, title: result.title, text: result.content }).catch(() => undefined),
         ]);
         const website = profile?.website || companyWebsite;
         await prisma.lead.create({
@@ -888,7 +842,7 @@ export async function discoverLeads() {
             intentSignal,
             recommendedService: search.service || LOB_SERVICES[lob],
             leadScore: score,
-            source: `${query} (${{ news: 'Google News', sam: 'SAM.gov' }[result.provider] || result.provider || 'web search'})`,
+            source: `${query} (${{ news: 'Google News' }[result.provider] || result.provider || 'web search'})`,
             outreachEmail: `contact@${website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '')}`,
             signals: {
               techStack: [],
@@ -898,7 +852,7 @@ export async function discoverLeads() {
                 `Source: ${domain}`,
               ],
               searchContext: result.content?.substring(0, 500),
-              dataSource: { news: 'Google News', sam: 'SAM.gov', tavily: 'Tavily', serper: 'Serper (Google)', brave: 'Brave Search' }[result.provider] || 'Web search',
+              dataSource: { news: 'Google News', tavily: 'Tavily', serper: 'Serper (Google)' }[result.provider] || 'Web search',
               tavilyUrl: result.url,
               postedAt: published ? published.date : null,
               postedAtSource: published ? published.method : null,
@@ -950,7 +904,7 @@ export async function discoverLeads() {
     // treating the whole scan as failed.
     webSearchUnavailable:
       lastSearchError &&
-      SEARCHES.filter((s) => s.kind !== 'news' && s.kind !== 'sam').every((s) => !sourcesBreakdown[s.query])
+      SEARCHES.filter((s) => s.kind !== 'news').every((s) => !sourcesBreakdown[s.query])
         ? lastSearchError
         : null,
     sources: sourcesBreakdown,

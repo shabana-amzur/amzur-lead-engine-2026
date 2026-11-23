@@ -94,7 +94,7 @@ function parseLinkedInCompany(result) {
 // Sites that are never a company's own website.
 const NOT_OFFICIAL = /(linkedin|wikipedia|crunchbase|glassdoor|indeed|lever\.co|greenhouse|prnewswire|businesswire|bloomberg|zoominfo|facebook|twitter|x\.com|youtube|instagram|builtin|wellfound|pitchbook|cbinsights|dnb\.com|apollo|leadiq|rocketreach|tavily|yahoo|reuters|forbes|craft\.co|owler|comparably|tracxn|signalhire|salezshark|globaldata)/i;
 
-// LinkedIn company result from Google/Brave: "RapidAI | LinkedIn" / "25,253 followers on LinkedIn. RapidAI delivers..."
+// LinkedIn company result from Google (Serper): "RapidAI | LinkedIn" / "25,253 followers on LinkedIn. RapidAI delivers..."
 function parseGenericLinkedIn(result) {
   const title = (result.title || '').split(/\s+[|\-–]\s+/)[0].trim();
   const content = (result.content || '').replace(/\s+/g, ' ');

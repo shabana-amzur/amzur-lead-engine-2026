@@ -14,7 +14,7 @@ const HIRING =
 
 // Selling / self-promotion.
 const SELF_PROMOTION =
-  /\b(we help|our (team|clients|services|consultants|experts)|contact us|dm me|book a (call|demo)|reach out to us|we offer|as a (leading|certified)|partner of the year|top \d+ [^.]{0,40}(companies|firms|partners|providers))\b/i;
+  /(\b(we help|our (team|clients|services|consultants|experts|ai|platform|solution|solutions|product|products|app|tool)|contact us|dm me|book a (call|demo)|reach out to us|we offer|we (build|provide|deliver)|as a (leading|certified)|partner of the year|introducing|top \d+ [^.]{0,40}(companies|firms|partners|providers))\b|looking for recommendations\?)/i;
 
 // Words in the post URL slug that mark a job ad, e.g. /posts/name_hiring-nowhiring-finops-...
 const HIRING_URL = /linkedin\.com\/posts\/[^/]*?[_-](hiring|nowhiring|wearehiring|jobs?|jobopening|vacancy|vacancies|recruiting|recruitment|careers?|opening|openings)[-_]/i;

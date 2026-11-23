@@ -163,16 +163,27 @@ async function fromArticle(url, companyName) {
   return { kind: 'press', headline, facts: [], summary, sections: [], from: 'Press release' };
 }
 
+// The sentence where the author actually asks, e.g.
+// "I'm looking for recommendations for a vendor/technology partner to ...".
+const ASK = /(seeking recommendations?|looking for recommendations?|any recommendations|does anyone have|can anyone recommend|could anyone recommend|can you recommend|who (would|do) you recommend|looking for (a|an) [^.?!]{0,60}(partner|vendor|agency|firm|company|provider|consultancy|team)|need (a|an) [^.?!]{0,40}(partner|vendor|agency|firm))/i;
+
 function fromLinkedInPost(text) {
   const body = (text || '')
-    .replace(/^[^|]{0,80}?['’]s Post\s*-\s*LinkedIn\s*\/?\s*/i, '')
+    // Page chrome from LinkedIn / search snippets.
+    .replace(/^[^|]{0,80}?['’]s Post\s*-?\s*(LinkedIn)?\s*\/?\s*/i, '')
+    .replace(/^[^.|]{0,80}? posted (this|on the)[^.]*?(\.\.\.|\.|…)\s*/i, '')
+    .replace(/^[^|]{0,120}\|\s*[^|]{0,60} posted on the[^.]*?(\.\.\.|…)\s*/i, '')
+    .replace(/\b(Close menu|Report this (post|comment);?|Like Comment|\d+mo\.?)\b\.?/gi, ' ')
     .replace(/^[A-Z][a-z]+ \d{1,2}, \d{4}\.\s*/, '')
-    .split(/\s\|\s|Report this comment|\d+ Comments/)[0]
+    .split(/\s\|\s|\d+ Comments/)[0]
+    .replace(/\s+/g, ' ')
     .trim();
   if (!body) return null;
-  const sentence = body.match(/^.{20,160}?[.?!](\s|$)/);
-  const firstSentence = sentence ? sentence[0].trim() : clip(body, 120).replace(/\s+\S*…?$/, '') + '…';
-  return { kind: 'linkedin', headline: firstSentence, facts: [], summary: clip(body, 500), sections: [], from: 'LinkedIn post' };
+  // Split only at ". X" style boundaries so ".NET" or "1.5" stay intact.
+  const sentences = body.split(/(?<=[.?!…])\s+(?=[A-Z"“])/).filter(Boolean);
+  const ask = sentences.find((sentence) => ASK.test(sentence));
+  const headline = clip((ask || sentences[0]).trim(), 160);
+  return { kind: 'linkedin', headline, facts: [], summary: clip(body, 500), sections: [], from: 'LinkedIn post' };
 }
 
 // Fallback from the search result itself (title + snippet).

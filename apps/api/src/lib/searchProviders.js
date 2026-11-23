@@ -1,5 +1,5 @@
-// Web search with automatic fallback: Tavily -> Serper (Google results) ->
-// Brave. A provider is used when its API key is set; when one fails with a
+// Web search with automatic fallback: Tavily -> Serper (Google results).
+// A provider is used when its API key is set; when one fails with a
 // limit/auth error it is skipped for a while so a scan doesn't keep hitting it.
 // All providers return the same shape:
 //   { title, url, content, published_date, provider }
@@ -10,8 +10,6 @@ const COOLDOWN_MS = 30 * 60 * 1000; // skip a failing provider for 30 minutes
 
 // provider name -> { until: timestamp, error } (per server instance)
 const disabled = new Map();
-
-const stripTags = (text) => (text || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 
 const PROVIDERS = [
   {
@@ -45,23 +43,6 @@ const PROVIDERS = [
         url: r.link,
         content: r.snippet || '',
         published_date: r.date || null,
-      }));
-    },
-  },
-  {
-    name: 'brave',
-    key: () => process.env.BRAVE_API_KEY,
-    async search(query, { maxResults = 10 } = {}) {
-      const { data } = await axios.get('https://api.search.brave.com/res/v1/web/search', {
-        params: { q: query, count: Math.min(maxResults, 20) },
-        headers: { 'X-Subscription-Token': process.env.BRAVE_API_KEY, Accept: 'application/json' },
-        timeout: TIMEOUT_MS,
-      });
-      return ((data.web && data.web.results) || []).map((r) => ({
-        title: stripTags(r.title),
-        url: r.url,
-        content: stripTags([r.description, ...(r.extra_snippets || [])].join(' ')),
-        published_date: r.page_age || null,
       }));
     },
   },
