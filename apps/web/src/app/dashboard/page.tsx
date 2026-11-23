@@ -1,14 +1,13 @@
 'use client';
 
 import useSWR from 'swr';
-import { authAPI, leadsAPI, scanAPI } from '@/lib/api';
+import { leadsAPI, scanAPI } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 export default function DashboardPage() {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState('all');
-  const [scanLoading, setScanLoading] = useState(false);
 
   // Fetch all leads
   const { data: leadsData, error: leadsError, mutate: refreshLeads } = useSWR(
@@ -21,24 +20,6 @@ export default function DashboardPage() {
 
   // Fetch scan history
   const { data: historyData } = useSWR('/api/scan/history', () => scanAPI.getHistory({ limit: 5 }));
-
-  const handleLogout = () => {
-    authAPI.logout();
-    router.push('/login');
-  };
-
-  const handleTriggerScan = async () => {
-    setScanLoading(true);
-    try {
-      await scanAPI.trigger();
-      alert('Discovery scan started! Refresh results after completion.');
-      setTimeout(() => refreshLeads(), 120000);
-    } catch (error: any) {
-      alert('Failed to start scan: ' + error.message);
-    } finally {
-      setScanLoading(false);
-    }
-  };
 
   const leads = leadsData?.leads || [];
   
@@ -160,13 +141,6 @@ export default function DashboardPage() {
             </div>
             <div className="flex gap-2">
               <button
-                onClick={handleTriggerScan}
-                disabled={scanLoading}
-                className="px-4 py-2 text-sm border border-blue-500 text-blue-600 rounded-md bg-white hover:bg-blue-50 disabled:opacity-50 flex items-center gap-2"
-              >
-                <span>🚀</span> {scanLoading ? 'Running...' : 'Run Discovery'}
-              </button>
-              <button
                 onClick={() => {
                   refreshLeads();
                   window.location.reload();
@@ -174,12 +148,6 @@ export default function DashboardPage() {
                 className="px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 flex items-center gap-2"
               >
                 <span>🔄</span> Refresh Results
-              </button>
-              <button
-                onClick={handleLogout}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2"
-              >
-                Logout
               </button>
             </div>
           </div>
