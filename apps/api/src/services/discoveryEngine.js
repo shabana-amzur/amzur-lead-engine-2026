@@ -428,7 +428,7 @@ let lastSearchError = null;
 // 'basic' depth costs 1 credit per search vs 2 for 'advanced'; snippets are
 // shorter but enough to identify the company and signal.
 async function searchWithTavily(query, depth = 'basic') {
-  // Tries Tavily, then Serper (whichever have API keys set).
+  // Tries Tavily, then Serper, then You.com (whichever have API keys set).
   const { results, provider, errors } = await searchWeb(query, { depth, maxResults: 10, recentDays: LEAD_MAX_AGE_DAYS });
   if (!provider && errors.length) {
     const last = errors[errors.length - 1];
@@ -919,7 +919,7 @@ export async function discoverLeads() {
                 `Source: ${domain}`,
               ],
               searchContext: result.content?.substring(0, 500),
-              dataSource: { news: 'Google News', tavily: 'Tavily', serper: 'Serper (Google)' }[result.provider] || 'Web search',
+              dataSource: { news: 'Google News', tavily: 'Tavily', serper: 'Serper (Google)', you: 'You.com' }[result.provider] || 'Web search',
               tavilyUrl: result.url,
               postedAt: published ? published.date : null,
               postedAtSource: published ? published.method : null,

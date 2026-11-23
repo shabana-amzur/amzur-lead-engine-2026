@@ -1,4 +1,4 @@
-// Web search with automatic fallback: Tavily -> Serper (Google results).
+// Web search with automatic fallback: Tavily -> Serper (Google results) -> You.com.
 // A provider is used when its API key is set; when one fails with a
 // limit/auth error it is skipped for a while so a scan doesn't keep hitting it.
 // All providers return the same shape:
@@ -55,6 +55,30 @@ const PROVIDERS = [
         url: r.link,
         content: r.snippet || '',
         published_date: r.date || null,
+      }));
+    },
+  },
+  {
+    // You.com Search API: POST https://ydc-index.io/v1/search, key in X-API-Key.
+    name: 'you',
+    key: () => process.env.YOU_API_KEY,
+    async search(query, { maxResults = 10, recentDays } = {}) {
+      const { data } = await axios.post(
+        'https://ydc-index.io/v1/search',
+        {
+          query,
+          count: Math.min(maxResults, 100),
+          // You.com supports day/week/month/year; results are filtered by exact age afterwards.
+          ...(recentDays ? { freshness: recentDays <= 1 ? 'day' : recentDays <= 7 ? 'week' : 'month' } : {}),
+        },
+        { headers: { 'X-API-Key': process.env.YOU_API_KEY, 'Content-Type': 'application/json' }, timeout: TIMEOUT_MS }
+      );
+      const web = (data.results && data.results.web) || [];
+      return web.map((r) => ({
+        title: r.title,
+        url: r.url,
+        content: [r.description, ...(r.snippets || [])].filter(Boolean).join(' '),
+        published_date: r.page_age || null,
       }));
     },
   },
