@@ -13,18 +13,15 @@ router.post('/run', authenticateToken, async (req: AuthRequest, res: Response) =
     // Dynamically import the discovery service
     const { discoverLeads } = await import('../services/discoveryEngine.js');
     
-    // Run discovery in background
-    discoverLeads()
-      .then((summary: any) => {
-        console.log('Discovery completed:', summary);
-      })
-      .catch((error: any) => {
-        console.error('Discovery error:', error);
-      });
+    // Run to completion before responding: on Vercel, work left running
+    // after the response is sent gets frozen and never finishes.
+    const summary = await discoverLeads();
+    console.log('Discovery completed:', summary);
 
-    res.json({ 
-      message: 'Lead discovery scan started',
-      status: 'running'
+    res.json({
+      message: 'Lead discovery scan completed',
+      status: 'completed',
+      summary,
     });
   } catch (error) {
     console.error('Error starting discovery:', error);
