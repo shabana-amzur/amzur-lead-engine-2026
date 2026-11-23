@@ -1,6 +1,7 @@
 import axios from 'axios';
 import OpenAI from 'openai';
 import prisma from '../lib/prisma';
+import nonBuyers from '../config/non-buyers.json';
 
 // OpenAI client for scoreWithOpenAI (not yet used by the scan). Created only
 // when a key is configured: constructing it without one throws, which would
@@ -19,7 +20,7 @@ const SEARCHES = [
     intent: 'Hiring cloud engineers',
   },
   {
-    query: '"cloud migration" OR "migrating to AWS" OR "moves to Azure" announces 2026 site:businesswire.com OR site:prnewswire.com',
+    query: '"completes migration to AWS" OR "migrates to Microsoft Azure" OR "selects Google Cloud" OR "cloud migration milestone" 2026 site:businesswire.com OR site:prnewswire.com',
     lob: 'Cloud',
     service: 'Cloud Migration Services',
     intent: 'Cloud migration initiative',
@@ -38,7 +39,7 @@ const SEARCHES = [
     intent: 'Hiring for NetSuite / ERP',
   },
   {
-    query: '"selects NetSuite" OR "implements NetSuite" OR "ERP modernization" 2026 site:businesswire.com OR site:prnewswire.com',
+    query: '"selects Oracle NetSuite" OR "chooses NetSuite" OR "goes live on NetSuite" OR "selects NetSuite" 2026 site:businesswire.com OR site:prnewswire.com',
     lob: 'ERP',
     service: 'NetSuite & ERP Services',
     intent: 'ERP modernization',
@@ -51,7 +52,7 @@ const SEARCHES = [
     intent: 'Building new applications',
   },
   {
-    query: '"launches new platform" OR "custom software" OR "digital transformation initiative" announces 2026 site:businesswire.com OR site:prnewswire.com',
+    query: '"announces" "investment in digital transformation" OR "digital transformation program" OR "modernize its customer experience" 2026 site:businesswire.com OR site:prnewswire.com',
     lob: 'Application Development',
     service: 'Application Development',
     intent: 'New digital product initiative',
@@ -64,7 +65,7 @@ const SEARCHES = [
   },
   // Legacy Modernization
   {
-    query: '"legacy modernization" OR "mainframe migration" OR "modernize legacy systems" announces 2026 site:businesswire.com OR site:prnewswire.com',
+    query: '"selects" OR "chooses" partner "to modernize" "legacy systems" OR "core banking system" OR "mainframe" 2026 site:businesswire.com OR site:prnewswire.com',
     lob: 'Legacy Modernization',
     service: 'Legacy Modernization',
     intent: 'Modernizing legacy systems',
@@ -77,7 +78,7 @@ const SEARCHES = [
   },
   // Process Automation
   {
-    query: '"robotic process automation" OR "intelligent automation" OR "workflow automation" announces 2026 site:businesswire.com OR site:prnewswire.com',
+    query: '"selects UiPath" OR "deploys UiPath" OR "chooses Automation Anywhere" OR "expands automation program" 2026 site:businesswire.com OR site:prnewswire.com',
     lob: 'Process Automation',
     service: 'Process Automation',
     intent: 'Process automation initiative',
@@ -95,15 +96,9 @@ const SEARCHES = [
     service: 'Solution Engineering',
     intent: 'Infrastructure needs',
   },
-  {
-    query: 'site:careers.* "We are hiring" cloud infrastructure',
-    lob: 'Solution',
-    service: 'Solution Engineering',
-    intent: 'Infrastructure needs',
-  },
   // Offshore / India dedicated teams
   {
-    query: '"offshore development center" OR "global capability center" OR "development center in India" announces 2026 site:businesswire.com OR site:prnewswire.com',
+    query: '"opens" "technology center" OR "innovation center" OR "engineering center" OR "global capability center" India 2026 site:businesswire.com OR site:prnewswire.com',
     lob: 'Offshore',
     service: 'India Dedicated Teams',
     intent: 'Expanding offshore team',
@@ -128,6 +123,23 @@ const NOT_COMPANIES = new Set([
   // Job aggregators / recruiters that post other companies' roles.
   'jobgether', 'recruitis',
 ]);
+
+// Companies that sell rather than buy (IT services firms, vendors, job sites).
+const NON_BUYERS = new Set(nonBuyers.companies);
+
+// The source text describes the company itself as a seller, e.g.
+// "NEORIS ... is a Digital Accelerator that helps companies" or
+// "Alliance, a national consulting firm". Also catches recruiter posts.
+function describesItselfAsSeller(companyName, text) {
+  if (!text) return false;
+  if (/\b(on behalf of a partner|on behalf of our client|listed on behalf of)\b/i.test(text)) return true;
+  const name = companyName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const selfDescription = new RegExp(
+    `${name}[^.]{0,60}?(\\bis\\b|,)\\s+(a|an|the|one of the)\\b[^.]{0,80}?(consult|IT services|technology services|services company|services firm|services provider|systems integrator|digital accelerator|solutions provider|provider of|automation platform|modernization platform|software development platform|staffing|outsourcing|design and technology services)`,
+    'i'
+  );
+  return selfDescription.test(text);
+}
 
 // A job title or page label picked up instead of a company name,
 // e.g. "Senior Software Engineer" or "Job Application for UiPath".
@@ -331,6 +343,12 @@ export async function discoverLeads() {
 
       const key = companyKey(companyName);
       if (!key || NOT_COMPANIES.has(key) || looksLikeJobTitle(companyName) || seenCompanies.has(key)) {
+        continue;
+      }
+
+      if (NON_BUYERS.has(key) || describesItselfAsSeller(companyName, `${result.title} ${result.content || ''}`)) {
+        console.log(`   ⏭️  Skipped: ${companyName} (sells services/products, not a buyer)`);
+        seenCompanies.add(key);
         continue;
       }
 

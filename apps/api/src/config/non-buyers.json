@@ -1,0 +1,14 @@
+{
+  "_comment": "Companies that sell rather than buy: IT services firms, consultancies, technology vendors, job aggregators and career sites. Matched by normalized company name (companyKey). Used by discovery to skip them and by scripts/remove-non-buyer-leads.js to clean them up.",
+  "companies": [
+    "accenture", "deloitte", "capgemini", "infosys", "wipro", "tcs", "tataconsultancyservices", "cognizant", "hcl", "hcltech",
+    "techmahindra", "epam", "epamsystems", "globant", "endava", "encora", "brillio", "cit", "neoris", "capco", "reply",
+    "roboyo", "greenlightconsulting", "fpt", "tataelxsi", "ltimindtree", "mphasis", "hexaware", "persistentsystems",
+    "virtusa", "ust", "slalom", "thoughtworks", "kpmg", "pwc", "ey", "ernstyoung", "rsm", "alliance", "scalenorth",
+    "ubiminds", "nwn", "ansr", "rivermeadow", "openlegacy", "blitzy", "automationanywhere", "uipath", "blueprism",
+    "aws", "amazonwebservices", "microsoft", "google", "oracle", "oraclenetsuite", "netsuite", "ibm", "salesforce",
+    "btcdigital",
+    "jobgether", "recruitis", "weekdayworks", "mercor", "toptal", "turing", "andela", "crossover",
+    "careersidekick", "communitykaplan", "kaplan", "indeed", "glassdoor", "linkedin", "ziprecruiter"
+  ]
+}

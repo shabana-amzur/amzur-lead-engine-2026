@@ -2,22 +2,9 @@
 
 import useSWR from 'swr';
 import { leadsAPI, scanAPI } from '@/lib/api';
+import { LOB_OPTIONS, LOBS, lobBadge, lobLabel } from '@/lib/lobs';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-
-// Lines of business. `value` is what the API stores on each lead (lead.lob);
-// keep in sync with SEARCHES in apps/api/src/services/discoveryEngine.js.
-const LOB_OPTIONS = [
-  { value: 'Cloud', label: 'Cloud', icon: '☁️', badge: 'bg-blue-100 text-blue-800' },
-  { value: 'ERP', label: 'ERP', icon: '📊', badge: 'bg-purple-100 text-purple-800' },
-  { value: 'Solution', label: 'Solution Engineering', icon: '💡', badge: 'bg-orange-100 text-orange-800' },
-  { value: 'Application Development', label: 'Application Development', icon: '🧩', badge: 'bg-teal-100 text-teal-800' },
-  { value: 'Legacy Modernization', label: 'Legacy Modernization', icon: '🏛️', badge: 'bg-amber-100 text-amber-800' },
-  { value: 'Process Automation', label: 'Process Automation', icon: '⚙️', badge: 'bg-indigo-100 text-indigo-800' },
-  { value: 'Offshore', label: 'Offshore', icon: '🌍', badge: 'bg-pink-100 text-pink-800' },
-];
-const LOBS = LOB_OPTIONS.map((option) => option.value);
-const lobLabel = (lob: string) => LOB_OPTIONS.find((option) => option.value === lob)?.label ?? lob;
 
 // Filter chips: intent-signal filters first, then one chip per line of business.
 const FILTER_CHIPS = [
@@ -137,8 +124,7 @@ export default function DashboardPage() {
     return 'bg-red-100 text-red-800';
   };
 
-  const getLobBadge = (lob: string) =>
-    LOB_OPTIONS.find((option) => option.value === lob)?.badge ?? 'bg-gray-100 text-gray-800';
+  const getLobBadge = lobBadge;
 
   const latestScan = scanData?.scan;
   const scanHistory = historyData?.scans || [];
