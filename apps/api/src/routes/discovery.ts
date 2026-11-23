@@ -66,7 +66,12 @@ router.post('/refresh', async (req, res: Response) => {
     if (summary.searchUnavailable) {
       return res.json({ status: 'search_unavailable', newLeadsFound: 0, error: summary.searchUnavailable, summary });
     }
-    res.json({ status: 'completed', newLeadsFound: summary.newLeadsFound, summary });
+    res.json({
+      status: 'completed',
+      newLeadsFound: summary.newLeadsFound,
+      webSearchUnavailable: summary.webSearchUnavailable || null,
+      summary,
+    });
   } catch (error) {
     console.error('Refresh discovery failed:', error);
     res.status(500).json({

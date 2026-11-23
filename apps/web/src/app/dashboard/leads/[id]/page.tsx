@@ -165,10 +165,30 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   const postedAtSource: string | undefined = signals.postedAtSource || undefined;
   const postedDaysAgo = postedAt ? (Date.now() - new Date(postedAt).getTime()) / 86400000 : null;
 
+  // The requirement as read from the source itself (job posting, press release, post).
+  const requirement: {
+    kind?: string;
+    headline?: string | null;
+    facts?: { label: string; value: string }[];
+    summary?: string | null;
+    sections?: { title: string; bullets: string[] }[];
+  } | null = signals.requirement || null;
+  const requirementText = requirement
+    ? [requirement.headline, requirement.summary, ...(requirement.sections || []).flatMap((section) => section.bullets)].join(' ')
+    : '';
+
   const techMentioned = TECH_KEYWORDS.filter((tech) => {
     const escaped = tech.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(^|[^A-Za-z])${escaped}([^A-Za-z]|$)`, 'i').test(context);
+    return new RegExp(`(^|[^A-Za-z])${escaped}([^A-Za-z]|$)`, 'i').test(`${requirementText} ${context}`);
   });
+
+  const requirementLabel =
+    {
+      job: 'Job opening',
+      press: 'Announcement',
+      linkedin: 'Asked on LinkedIn',
+      web: source.type,
+    }[requirement?.kind || ''] || source.type;
 
   const possibleVendor = VENDOR_PATTERNS.test(context);
 
@@ -283,6 +303,86 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Main column */}
           <div className="lg:col-span-2 space-y-4">
+            <section className="bg-white border border-gray-200 rounded-lg p-6">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">What they need</h2>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 font-medium">{requirementLabel}</span>
+                  {postedAt && (
+                    <span className={postedDaysAgo !== null && postedDaysAgo > 365 ? 'text-amber-700 font-medium' : 'text-gray-500'}>
+                      Posted {formatDate(postedAt)} · {timeAgo(postedAt)}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <h3 className="text-xl font-semibold text-gray-900">
+                {requirement?.headline || lead.intentSignal || 'Requirement not recorded'}
+              </h3>
+
+              {requirement?.facts && requirement.facts.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {requirement.facts.map((fact) => (
+                    <span key={fact.label} className="text-xs px-2 py-1 rounded-md border border-gray-200 text-gray-700">
+                      <span className="text-gray-400">{fact.label}:</span> {fact.value}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {postedDaysAgo !== null && postedDaysAgo > 365 && (
+                <p className="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">
+                  This was posted over a year ago: the need may already be met. Confirm it&apos;s still current.
+                </p>
+              )}
+
+              {requirement?.summary ? (
+                <p className="mt-4 text-gray-800 leading-relaxed">{requirement.summary}</p>
+              ) : context ? (
+                <div className="mt-4">
+                  <p className="text-xs text-gray-400 mb-1">From the search result (may be partial):</p>
+                  <p className="text-sm text-gray-700 leading-relaxed">{context.trim()}{context.length >= 500 ? '…' : ''}</p>
+                </div>
+              ) : null}
+
+              {(requirement?.sections || []).map((section) => (
+                <div key={section.title} className="mt-4">
+                  <h4 className="text-sm font-medium text-gray-700 mb-1.5">{section.title}</h4>
+                  <ul className="space-y-1.5 text-sm text-gray-700">
+                    {section.bullets.map((bullet) => (
+                      <li key={bullet} className="flex gap-2">
+                        <span className="text-gray-400 mt-0.5">•</span>
+                        <span>{bullet}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+
+              {techMentioned.length > 0 && (
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-gray-500">Technologies:</span>
+                  {techMentioned.map((tech) => (
+                    <span key={tech} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-md text-xs font-medium">
+                      {tech}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-5 pt-4 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3 text-sm">
+                <span className="text-gray-600">
+                  <span className="text-gray-400">Amzur fit:</span>{' '}
+                  <span className="font-medium text-gray-900">{lead.recommendedService || lobLabel(lead.lob)}</span>
+                </span>
+                {sourceUrl && (
+                  <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
+                    Read the full {source.type.toLowerCase()} ↗
+                  </a>
+                )}
+              </div>
+            </section>
+
             {!fromLinkedIn && (
               <section className="bg-white border border-gray-200 rounded-lg p-6">
                 <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">About {company}</h2>
@@ -327,7 +427,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                       {profile.linkedinIndustry && (
                         <div className="flex justify-between sm:justify-start gap-3">
                           <dt className="text-gray-500 w-24 shrink-0">Sector</dt>
-                          <dd className="text-gray-900">{profile.linkedinIndustry}</dd>
+                          <dd className="text-gray-900">{profile.linkedinIndustry.replace(/\s*Industry codes:.*$/i, '')}</dd>
                         </div>
                       )}
                       {profile.founded && (
@@ -406,40 +506,6 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 <dt className="text-gray-500">Found by Lead Engine</dt>
                 <dd className="text-gray-900">{formatDate(lead.discoveredAt)}</dd>
               </dl>
-            </section>
-
-            <section className="bg-white border border-gray-200 rounded-lg p-6">
-              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Buying signal</h2>
-              <p className="text-lg font-medium text-gray-900">⚡ {lead.intentSignal || 'No signal recorded'}</p>
-              <p className="text-sm text-gray-600 mt-1">{source.meaning}</p>
-
-              {context && (
-                <div className="mt-5">
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">What the source says</h3>
-                  <blockquote className="border-l-4 border-gray-200 pl-4 text-sm text-gray-700 leading-relaxed whitespace-pre-line">
-                    {context.trim()}
-                    {context.length >= 500 ? '…' : ''}
-                  </blockquote>
-                  {sourceUrl && (
-                    <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="inline-block mt-2 text-sm text-blue-600 hover:text-blue-800">
-                      Read the full {source.type.toLowerCase()} →
-                    </a>
-                  )}
-                </div>
-              )}
-
-              {techMentioned.length > 0 && (
-                <div className="mt-5">
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">Technologies mentioned</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {techMentioned.map((tech) => (
-                      <span key={tech} className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-md text-xs font-medium">
-                        {tech}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
             </section>
 
             {playbook && (

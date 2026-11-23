@@ -6,6 +6,9 @@ import industryConfig from '../config/industries.json';
 import { findPublishedDate } from '../lib/publishedDate';
 import { findCompanyProfile } from '../lib/companyProfile';
 import { classifyLinkedInPost } from '../lib/linkedinFilters';
+import { findRequirementDetails } from '../lib/requirementDetails';
+import { searchWeb } from '../lib/searchProviders';
+import { searchNews, searchTenders } from '../lib/freeSources';
 
 // OpenAI client for scoreWithOpenAI (not yet used by the scan). Created only
 // when a key is configured: constructing it without one throws, which would
@@ -178,6 +181,56 @@ const SEARCHES = [
     lob: 'Offshore',
     intent: 'Asked on LinkedIn for an offshore team',
   },
+  // ---- Free sources (no search credits) ----
+  // Google News: recent announcements where the headline company is buying.
+  {
+    kind: 'news',
+    query: '"selects NetSuite" OR "chooses NetSuite" OR "goes live on NetSuite" OR "implements NetSuite"',
+    lob: 'ERP',
+    intent: 'Chose NetSuite / ERP (news)',
+  },
+  {
+    kind: 'news',
+    query: '"migrates to AWS" OR "moves to Microsoft Azure" OR "selects Google Cloud" OR "completes cloud migration"',
+    lob: 'Cloud',
+    intent: 'Cloud migration announced (news)',
+  },
+  {
+    kind: 'news',
+    query: '(selects OR chooses) ("legacy modernization" OR "mainframe modernization" OR "core system replacement")',
+    lob: 'Legacy Modernization',
+    intent: 'Legacy modernization announced (news)',
+  },
+  {
+    kind: 'news',
+    query: '(selects OR chooses OR deploys) (UiPath OR "Automation Anywhere" OR "Blue Prism" OR "Power Automate")',
+    lob: 'Process Automation',
+    intent: 'Automation program announced (news)',
+  },
+  {
+    kind: 'news',
+    query: '(hospital OR "health system" OR "medical center") (selects OR chooses OR implements) (cloud OR ERP OR Workday OR Oracle OR automation OR "digital transformation")',
+    lob: 'auto',
+    requireIndustry: 'Healthcare',
+    intent: 'Healthcare technology decision (news)',
+  },
+  {
+    kind: 'news',
+    query: '(utility OR "electric cooperative" OR "oil and gas" OR "energy company") (selects OR chooses OR implements) (SAP OR Oracle OR cloud OR ERP OR "digital transformation" OR automation)',
+    lob: 'auto',
+    requireIndustry: 'Energy',
+    intent: 'Energy technology decision (news)',
+  },
+  {
+    kind: 'news',
+    query: '"global capability center" OR "technology center" OR "engineering center" opens India',
+    headlineVerbs: 'expands|opens|inaugurates|launches|sets up',
+    lob: 'Offshore',
+    intent: 'Opening an India technology center (news)',
+  },
+  // SAM.gov: US government tenders for IT services (needs SAM_GOV_API_KEY).
+  { kind: 'sam', query: 'SAM.gov NAICS 541512 (computer systems design)', naics: '541512', lob: 'auto' },
+  { kind: 'sam', query: 'SAM.gov NAICS 541511 (custom programming)', naics: '541511', lob: 'auto' },
 ];
 
 // Amzur service recommended for each line of business.
@@ -195,7 +248,7 @@ const LOB_SERVICES = {
 // Order breaks ties (more specific services first).
 const LOB_KEYWORDS = [
   ['ERP', /\b(netsuite|erp|sap|oracle financials|dynamics 365)\b/gi],
-  ['Legacy Modernization', /\b(mainframe|cobol|legacy|core banking)\b/gi],
+  ['Legacy Modernization', /\b(mainframe|cobol|legacy|core banking|core system|ehr|emr|meditech|expanse|epic|cerner|oracle health)\b/gi],
   ['Process Automation', /\b(rpa|uipath|automation anywhere|process automation|workflow automation|power automate|automation engineer)\b/gi],
   ['Solution', /\b(devops|sre|site reliability|platform engineer|kubernetes|terraform|ci\/cd)\b/gi],
   ['Cloud', /\b(cloud|aws|azure|gcp|google cloud|migration)\b/gi],
@@ -353,28 +406,13 @@ let lastSearchError = null;
 // 'basic' depth costs 1 credit per search vs 2 for 'advanced'; snippets are
 // shorter but enough to identify the company and signal.
 async function searchWithTavily(query, depth = 'basic') {
-  try {
-    const response = await axios.post(
-      'https://api.tavily.com/search',
-      {
-        api_key: process.env.TAVILY_API_KEY,
-        query: query,
-        search_depth: depth,
-        max_results: 10,
-      },
-      {
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-
-    return response.data.results || [];
-  } catch (error) {
-    console.error(`Tavily search error for "${query}":`, error.message);
-    const status = error.response?.status;
-    const detail = error.response?.data?.detail?.error || error.response?.data?.detail || error.message;
-    lastSearchError = { status, message: typeof detail === 'string' ? detail : error.message };
-    return [];
+  // Tries Tavily, then Serper, then Brave (whichever have API keys set).
+  const { results, provider, errors } = await searchWeb(query, { depth, maxResults: 10 });
+  if (!provider && errors.length) {
+    const last = errors[errors.length - 1];
+    lastSearchError = { status: last.status, message: last.message, provider: last.provider };
   }
+  return results;
 }
 
 /**
@@ -494,6 +532,82 @@ Return ONLY valid JSON with this exact structure:
   }
 }
 
+// Company that is acting in a news headline, e.g.
+// "Rush University System for Health selects AGFA..." -> "Rush University System for Health".
+// Verbs where the headline company is the buyer. "Expands"/"launches" usually
+// mean a vendor talking about itself, so they're only used where a search asks.
+const BUYER_VERBS = 'selects|select|chooses|choose|picks|taps|implements|implement|deploys|adopts|goes live|went live|migrates|moves|completes|signs|awards|partners with';
+
+function companyFromHeadline(title, extraVerbs) {
+  const verbs = extraVerbs ? `${BUYER_VERBS}|${extraVerbs}` : BUYER_VERBS;
+  const match = (title || '').match(new RegExp(`^(.{2,90}?)\\s+(${verbs})\\b`, 'i'));
+  if (!match) return null;
+  let name = match[1]
+    .replace(/^.*?:\s+/, '') // "'Absurd ambition': Pulumi" -> "Pulumi"
+    .replace(/^[A-Z][A-Za-z.\s-]{1,30}-based\s+/, '') // "New Jersey-based X" -> "X"
+    .replace(/^.*\bparent company\s+/i, '') // "Royal Canin Parent Company Mars" -> "Mars"
+    .replace(/\s+and\s+.*$/i, '') // "X and Y Select" -> "X"
+    .replace(/['’]s$/, '')
+    .trim();
+  // Fragments, sentences and vendor self-descriptions are not company names.
+  if (!name || name.includes(',') || name.split(/\s+/).length > 7) return null;
+  if (/\b(provider|vendor|startup|firm|agency|report|study|survey|cancels|announces)\b/i.test(name)) return null;
+  return name;
+}
+
+// Requirement details straight from a news item or tender (no page fetch).
+function feedRequirement(search, result) {
+  if (search.kind === 'sam') {
+    const deadline = result.responseDeadline ? new Date(result.responseDeadline) : null;
+    return {
+      kind: 'rfp',
+      headline: result.title,
+      facts: [
+        result.agency && { label: 'Agency', value: result.agency },
+        result.noticeType && { label: 'Notice', value: result.noticeType },
+        result.solicitationNumber && { label: 'Solicitation', value: result.solicitationNumber },
+        deadline && !Number.isNaN(deadline.getTime()) && { label: 'Response due', value: deadline.toISOString().slice(0, 10) },
+        result.placeOfPerformance && { label: 'Place', value: result.placeOfPerformance },
+        result.naics && { label: 'NAICS', value: result.naics },
+      ].filter(Boolean),
+      summary: null,
+      sections: [],
+      from: 'SAM.gov',
+    };
+  }
+  return {
+    kind: 'press',
+    headline: result.title,
+    facts: result.publisher ? [{ label: 'Published by', value: result.publisher }] : [],
+    summary: null,
+    sections: [],
+    from: 'News',
+  };
+}
+
+// SAM.gov allows few API calls per day on a basic key: query at most every 6 hours.
+const SAM_INTERVAL_HOURS = 6;
+
+async function samDueForRun() {
+  if (!process.env.SAM_GOV_API_KEY) return false;
+  const recent = await prisma.scanRun.findMany({
+    where: { startedAt: { gte: new Date(Date.now() - SAM_INTERVAL_HOURS * 3600000) } },
+    select: { sources: true },
+  });
+  return !recent.some((run) => run.sources && Object.keys(run.sources).some((key) => key.startsWith('SAM.gov')));
+}
+
+async function fetchForSearch(search, samDue) {
+  try {
+    if (search.kind === 'news') return await searchNews(search.query);
+    if (search.kind === 'sam') return samDue ? await searchTenders({ naics: search.naics }) : null;
+  } catch (error) {
+    console.error(`Free source error for "${search.query}":`, error.message);
+    return [];
+  }
+  return searchWithTavily(search.query, search.depth);
+}
+
 /**
  * Save a LinkedIn post as a lead when someone is asking for a provider.
  * The lead is the post's author: LinkedIn posts rarely name the employer.
@@ -540,7 +654,7 @@ async function saveLinkedInLead(search, result, seenCompanies) {
         intentSignal: search.intent,
         recommendedService: LOB_SERVICES[lob],
         leadScore: score,
-        source: `${search.query} (Tavily · LinkedIn)`,
+        source: `${search.query} (${result.provider || 'web search'} · LinkedIn)`,
         outreachEmail: null,
         signals: {
           leadType: 'linkedin_post',
@@ -554,6 +668,9 @@ async function saveLinkedInLead(search, result, seenCompanies) {
           searchContext: text.substring(0, 500),
           tavilyUrl: url,
           techStack: [],
+          sourceTitle: result.title || null,
+          requirement: await findRequirementDetails(url, { companyName: author, title: result.title, text }).catch(() => null),
+          requirementChecked: true,
         },
       },
     });
@@ -571,52 +688,70 @@ async function saveLinkedInLead(search, result, seenCompanies) {
  * a lookup failed). Runs at the end of every scan so older leads catch up a
  * few at a time without depending on the deploy build. ~1 Tavily credit each.
  */
-export async function enrichExistingLeads(limit = 10) {
+export async function enrichExistingLeads(limit = 15) {
   const leads = await prisma.lead.findMany({
     select: { id: true, companyName: true, industry: true, website: true, hq: true, employees: true, signals: true },
     orderBy: { leadScore: 'desc' },
   });
-  const pending = leads
-    .filter((lead) => {
-      const signals = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
-      if (!signals.postedAtChecked) return true;
-      return signals.leadType !== 'linkedin_post' && !signals.companyChecked;
-    })
-    .slice(0, limit);
+  const needs = (lead) => {
+    const signals = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
+    return {
+      date: !signals.postedAtChecked,
+      requirement: !signals.requirementChecked,
+      profile: signals.leadType !== 'linkedin_post' && !signals.companyChecked,
+    };
+  };
+  const pending = leads.filter((lead) => Object.values(needs(lead)).some(Boolean)).slice(0, limit);
 
   let updated = 0;
   await Promise.all(
     pending.map(async (lead) => {
       const signals = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
-      const needsProfile = signals.leadType !== 'linkedin_post' && !signals.companyChecked;
+      const todo = needs(lead);
+      const url = signals.tavilyUrl;
+      // Each lookup is independent: a failure (e.g. search provider down)
+      // leaves only that part unchecked so a later scan retries it.
+      const attempt = (run) => run().then((value) => ({ ok: true, value }), () => ({ ok: false }));
+      const [date, requirement, profile] = await Promise.all([
+        todo.date ? attempt(() => findPublishedDate(url)) : null,
+        todo.requirement
+          ? attempt(() => findRequirementDetails(url, { companyName: lead.companyName, title: signals.sourceTitle, text: signals.searchContext }))
+          : null,
+        todo.profile
+          ? attempt(() => findCompanyProfile(lead.companyName, { industry: lead.industry, sourceUrl: url }))
+          : null,
+      ]);
+
+      const nextSignals = { ...signals };
+      const data = {};
+      if (date?.ok) {
+        nextSignals.postedAt = date.value ? date.value.date : null;
+        nextSignals.postedAtSource = date.value ? date.value.method : null;
+        nextSignals.postedAtChecked = true;
+      }
+      if (requirement?.ok) {
+        nextSignals.requirement = requirement.value || null;
+        nextSignals.requirementChecked = true;
+      }
+      if (profile?.ok) {
+        const found = profile.value;
+        nextSignals.company = found;
+        nextSignals.companyChecked = true;
+        if (found?.website) {
+          data.website = found.website;
+          data.outreachEmail = `contact@${found.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '')}`;
+        }
+        if (found?.headquarters) data.hq = found.headquarters;
+        else if (lead.hq === 'USA') data.hq = null; // old placeholder, not real data
+        if (found?.employees) data.employees = found.employees;
+      }
+      if (!date?.ok && !requirement?.ok && !profile?.ok) return;
+
       try {
-        const [published, profile] = await Promise.all([
-          signals.postedAtChecked ? null : findPublishedDate(signals.tavilyUrl),
-          needsProfile ? findCompanyProfile(lead.companyName, { industry: lead.industry, sourceUrl: signals.tavilyUrl }) : null,
-        ]);
-        const nextSignals = { ...signals };
-        if (!signals.postedAtChecked) {
-          nextSignals.postedAt = published ? published.date : null;
-          nextSignals.postedAtSource = published ? published.method : null;
-          nextSignals.postedAtChecked = true;
-        }
-        const data = { signals: nextSignals };
-        if (needsProfile) {
-          nextSignals.company = profile;
-          nextSignals.companyChecked = true;
-          if (profile?.website) {
-            data.website = profile.website;
-            data.outreachEmail = `contact@${profile.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '')}`;
-          }
-          if (profile?.headquarters) data.hq = profile.headquarters;
-          else if (lead.hq === 'USA') data.hq = null; // old placeholder, not real data
-          if (profile?.employees) data.employees = profile.employees;
-        }
-        await prisma.lead.update({ where: { id: lead.id }, data });
+        await prisma.lead.update({ where: { id: lead.id }, data: { ...data, signals: nextSignals } });
         updated++;
       } catch (error) {
-        // Lookup failed (network, rate limit): leave unchecked so a later scan retries.
-        console.error(`   ⚠️  Could not enrich ${lead.companyName}:`, error.message);
+        console.error(`   ⚠️  Could not update ${lead.companyName}:`, error.message);
       }
     })
   );
@@ -654,12 +789,15 @@ export async function discoverLeads() {
   lastSearchError = null;
 
   // Run all searches in parallel; Tavily latency dominates scan time.
+  const samDue = await samDueForRun().catch(() => false);
   const searchResults = await Promise.all(
-    SEARCHES.map(async (search) => ({ search, results: await searchWithTavily(search.query, search.depth) }))
+    SEARCHES.map(async (search) => ({ search, results: await fetchForSearch(search, samDue) }))
   );
 
-  for (const { search, results } of searchResults) {
+  for (const { search, results: fetched } of searchResults) {
     const { query } = search;
+    if (fetched === null) continue; // source skipped this scan (e.g. SAM.gov interval)
+    const results = fetched;
     sourcesBreakdown[query] = results.length;
     console.log(`\n🔎 [${search.kind || search.lob}] "${query}": ${results.length} results`);
 
@@ -674,7 +812,10 @@ export async function discoverLeads() {
         continue;
       }
 
-      const companyName = extractCompanyName(result);
+      const companyName =
+        search.kind === 'news' ? companyFromHeadline(result.title, search.headlineVerbs)
+        : search.kind === 'sam' ? result.agency
+        : extractCompanyName(result);
       if (!companyName) {
         console.log(`   ⏭️  Skipped: ${result.title} (no company name)`);
         continue;
@@ -691,8 +832,9 @@ export async function discoverLeads() {
         continue;
       }
 
-      // Hiring posts: name the role; otherwise use the search's signal.
+      // Hiring posts: name the role; tenders: the RFP title; otherwise the search's signal.
       let intentSignal = search.intent;
+      if (search.kind === 'sam') intentSignal = `RFP: ${(result.title || 'Government tender').slice(0, 80)}`;
       if (isJobBoard(domain)) {
         const role = result.title.match(ROLE_PATTERN);
         if (role) intentSignal = `Hiring ${role[0].trim()}`;
@@ -722,9 +864,16 @@ export async function discoverLeads() {
       // parallel with the rest of the scan; awaited after the loop.
       pendingSaves.push((async () => {
       try {
-        const [published, profile] = await Promise.all([
-          findPublishedDate(result.url, result.published_date),
-          findCompanyProfile(companyName, { industry, sourceUrl: result.url }).catch(() => null),
+        const fromFeed = search.kind === 'news' || search.kind === 'sam';
+        const [published, profile, requirement] = await Promise.all([
+          fromFeed
+            ? result.published_date
+              ? { date: result.published_date, method: search.kind === 'sam' ? 'SAM.gov' : `News feed (${result.publisher || 'Google News'})` }
+              : null
+            : findPublishedDate(result.url, result.published_date),
+          // Government agencies have no company profile worth looking up.
+          search.kind === 'sam' ? null : findCompanyProfile(companyName, { industry, sourceUrl: result.url }).catch(() => null),
+          fromFeed ? feedRequirement(search, result) : findRequirementDetails(result.url, { companyName, title: result.title, text: result.content }).catch(() => undefined),
         ]);
         const website = profile?.website || companyWebsite;
         await prisma.lead.create({
@@ -739,7 +888,7 @@ export async function discoverLeads() {
             intentSignal,
             recommendedService: search.service || LOB_SERVICES[lob],
             leadScore: score,
-            source: `${query} (Tavily)`,
+            source: `${query} (${{ news: 'Google News', sam: 'SAM.gov' }[result.provider] || result.provider || 'web search'})`,
             outreachEmail: `contact@${website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '')}`,
             signals: {
               techStack: [],
@@ -749,13 +898,16 @@ export async function discoverLeads() {
                 `Source: ${domain}`,
               ],
               searchContext: result.content?.substring(0, 500),
-              dataSource: 'Tavily',
+              dataSource: { news: 'Google News', sam: 'SAM.gov', tavily: 'Tavily', serper: 'Serper (Google)', brave: 'Brave Search' }[result.provider] || 'Web search',
               tavilyUrl: result.url,
               postedAt: published ? published.date : null,
               postedAtSource: published ? published.method : null,
               postedAtChecked: true,
               company: profile,
               companyChecked: true,
+              sourceTitle: result.title || null,
+              requirement: requirement || null,
+              requirementChecked: requirement !== undefined,
             },
           },
         });
@@ -772,7 +924,7 @@ export async function discoverLeads() {
   await Promise.all(pendingSaves);
 
   // Let older leads catch up on company profiles and posted dates.
-  const enrichedExisting = await enrichExistingLeads(10).catch((error) => {
+  const enrichedExisting = await enrichExistingLeads(15).catch((error) => {
     console.error('Enriching older leads failed:', error.message);
     return 0;
   });
@@ -794,6 +946,13 @@ export async function discoverLeads() {
     enrichedExisting,
     // Every search failed: the search provider is unavailable (e.g. usage limit).
     searchUnavailable: Object.values(sourcesBreakdown).every((count) => count === 0) && lastSearchError ? lastSearchError : null,
+    // Paid web search failed but free sources still ran: report it without
+    // treating the whole scan as failed.
+    webSearchUnavailable:
+      lastSearchError &&
+      SEARCHES.filter((s) => s.kind !== 'news' && s.kind !== 'sam').every((s) => !sourcesBreakdown[s.query])
+        ? lastSearchError
+        : null,
     sources: sourcesBreakdown,
     duration: new Date() - scanRun.startedAt,
   };

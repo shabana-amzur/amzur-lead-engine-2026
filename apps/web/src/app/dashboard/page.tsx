@@ -117,8 +117,11 @@ export default function DashboardPage() {
 
       if (result.status === 'completed') {
         const count = result.newLeadsFound || 0;
+        const found = count > 0 ? `${count} new lead${count === 1 ? '' : 's'} found.` : 'No new leads found.';
         setRefreshMessage(
-          count > 0 ? `${count} new lead${count === 1 ? '' : 's'} found.` : 'No new leads found.'
+          result.webSearchUnavailable
+            ? `${found} Web search is paused (search provider limit reached); news and tender sources still ran.`
+            : found
         );
       } else if (result.status === 'skipped') {
         const next = new Date(result.nextScanAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
