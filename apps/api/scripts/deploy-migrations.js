@@ -39,5 +39,19 @@ if (process.env.VERCEL_ENV === 'production') {
     process.exit(1);
   }
 
-  process.exit(seed.status ?? 1);
+  if (seed.status !== 0) {
+    process.exit(seed.status ?? 1);
+  }
+
+  // Cleanup of duplicate leads. Non-fatal: a failure here shouldn't block the deploy.
+  const dedupe = spawnSync(process.execPath, [path.join(__dirname, 'dedupe-leads.js')], {
+    cwd: path.join(repositoryRoot, 'apps', 'api'),
+    stdio: 'inherit',
+  });
+
+  if (dedupe.error || dedupe.status !== 0) {
+    console.warn('Duplicate lead cleanup did not complete; continuing deploy.');
+  }
+
+  process.exit(0);
 }

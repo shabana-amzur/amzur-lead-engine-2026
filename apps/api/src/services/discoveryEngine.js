@@ -2,19 +2,100 @@ import axios from 'axios';
 import OpenAI from 'openai';
 import prisma from '../lib/prisma';
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// OpenAI client for scoreWithOpenAI (not yet used by the scan). Created only
+// when a key is configured: constructing it without one throws, which would
+// break every scan even though discovery itself only needs Tavily.
+const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
-// Search queries targeting ACTUAL buying intent (not blog mentions)
-const SEARCH_QUERIES = [
-  'site:greenhouse.io OR site:lever.co "DevOps Engineer" OR "Cloud Engineer"',
-  'site:jobs.lever.co OR site:boards.greenhouse.io "Senior Backend Engineer"',
-  'site:careers.* "We are hiring" cloud infrastructure',
-  '"Series B funding" "announces" 2026 site:techcrunch.com OR site:businesswire.com',
-  'site:sam.gov "cloud migration" RFP 2026',
+// Searches targeting actual buying intent, tagged with the line of business
+// (LOB) and Amzur service each one feeds. Every LOB on the dashboard needs at
+// least one search here, or it can never receive leads.
+const SEARCHES = [
+  // Cloud
+  {
+    query: 'site:greenhouse.io OR site:lever.co "Cloud Engineer" OR "AWS Engineer" OR "Azure Engineer"',
+    lob: 'Cloud',
+    service: 'Cloud Migration Services',
+    intent: 'Hiring cloud engineers',
+  },
+  {
+    query: '"cloud migration" OR "migrating to AWS" OR "moves to Azure" announces 2026 site:businesswire.com OR site:prnewswire.com',
+    lob: 'Cloud',
+    service: 'Cloud Migration Services',
+    intent: 'Cloud migration initiative',
+  },
+  {
+    query: 'site:sam.gov "cloud migration" RFP 2026',
+    lob: 'Cloud',
+    service: 'Cloud Migration Services',
+    intent: 'RFP for cloud migration',
+  },
+  // ERP
+  {
+    query: 'site:greenhouse.io OR site:lever.co "NetSuite Administrator" OR "NetSuite Developer" OR "ERP Analyst"',
+    lob: 'ERP',
+    service: 'NetSuite & ERP Services',
+    intent: 'Hiring for NetSuite / ERP',
+  },
+  {
+    query: '"selects NetSuite" OR "implements NetSuite" OR "ERP modernization" 2026 site:businesswire.com OR site:prnewswire.com',
+    lob: 'ERP',
+    service: 'NetSuite & ERP Services',
+    intent: 'ERP modernization',
+  },
+  // Staffing
+  {
+    query: 'site:jobs.lever.co OR site:boards.greenhouse.io "Senior Backend Engineer" OR "Full Stack Engineer"',
+    lob: 'Staffing',
+    service: 'IT Contract Staffing',
+    intent: 'Hiring engineers',
+  },
+  {
+    query: '"Series B funding" "announces" 2026 site:techcrunch.com OR site:businesswire.com',
+    lob: 'Staffing',
+    service: 'IT Contract Staffing',
+    intent: 'Recent Series B funding',
+  },
+  // Solution Engineering
+  {
+    query: 'site:greenhouse.io OR site:lever.co "DevOps Engineer" OR "Platform Engineer" OR "Site Reliability Engineer"',
+    lob: 'Solution',
+    service: 'Solution Engineering',
+    intent: 'Infrastructure needs',
+  },
+  {
+    query: 'site:careers.* "We are hiring" cloud infrastructure',
+    lob: 'Solution',
+    service: 'Solution Engineering',
+    intent: 'Infrastructure needs',
+  },
+  // Offshore / India dedicated teams
+  {
+    query: '"offshore development center" OR "global capability center" OR "development center in India" announces 2026 site:businesswire.com OR site:prnewswire.com',
+    lob: 'Offshore',
+    service: 'India Dedicated Teams',
+    intent: 'Expanding offshore team',
+  },
 ];
+
+// Job titles worth turning into a "Hiring <role>" signal.
+const ROLE_PATTERN =
+  /(Senior |Junior |Lead |Staff |Principal )?(DevOps|Cloud|AWS|Azure|GCP|Backend|Infrastructure|SRE|Platform|Site Reliability|Software|Full[- ]?Stack|Data|NetSuite|ERP|Salesforce)\s+(Engineer|Architect|Developer|Administrator|Analyst|Consultant)/i;
+
+// Key used to recognise the same company across scans, e.g. "CaseGuard, Inc." -> "caseguard".
+function companyKey(name) {
+  return (name || '')
+    .toLowerCase()
+    .replace(/\b(inc|llc|ltd|corp|corporation|co|company|technologies|technology)\b\.?/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+// Names that are really the job board or news site, not a prospect.
+const NOT_COMPANIES = new Set(['lever', 'greenhouse', 'jobs', 'careers', 'techcrunch', 'businesswire', 'prnewswire', 'samgov', 'sam']);
+
+function isJobBoard(domain) {
+  return !!domain && (domain.includes('greenhouse.io') || domain.includes('lever.co') || domain.startsWith('jobs.'));
+}
 
 /**
  * Search for companies using Tavily API
@@ -72,7 +153,7 @@ function extractCompanyName(result) {
   // For press releases, extract from title
   if (domain?.includes('techcrunch') || domain?.includes('businesswire') || domain?.includes('prnewswire')) {
     // Title format: "Stripe raises $600M Series H" or "Acme Corp announces..."
-    const companyMatch = result.title.match(/^([A-Z][a-zA-Z0-9\s&]+?)(?:\s+(?:raises|announces|secures|closes|launches|unveils))/i);
+    const companyMatch = result.title.match(/^([A-Z][a-zA-Z0-9\s&.]+?)(?:\s+(?:raises|announces|secures|closes|launches|unveils|selects|chooses|implements|completes|migrates|moves|opens|expands|establishes|partners|deploys|goes live))/i);
     if (companyMatch) return companyMatch[1].trim();
   }
   
@@ -125,6 +206,7 @@ Return ONLY valid JSON with this exact structure:
   "outreachEmail": "<best guess email like info@domain.com or careers@domain.com>"
 }`;
 
+    if (!openai) throw new Error("OPENAI_API_KEY is not set");
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
@@ -162,7 +244,7 @@ Return ONLY valid JSON with this exact structure:
  */
 export async function discoverLeads() {
   console.log('🔍 Starting lead discovery process...');
-  
+
   const scanRun = await prisma.scanRun.create({
     data: {
       startedAt: new Date(),
@@ -175,152 +257,82 @@ export async function discoverLeads() {
   let totalCompaniesScanned = 0;
   let newLeadsFound = 0;
   const sourcesBreakdown = {};
-  const processedDomains = new Set();
 
-  // Get existing domains from database to avoid duplicates
-  const existingLeads = await prisma.lead.findMany({
-    select: { website: true },
-  });
-  
-  existingLeads.forEach((lead) => {
-    if (lead.website) {
-      const domain = extractDomain(lead.website);
-      if (domain) processedDomains.add(domain);
-    }
-  });
+  // Skip companies we already have. Compare by company name: job-board results
+  // all share a domain (jobs.lever.co), so domains can't identify a company.
+  const existingLeads = await prisma.lead.findMany({ select: { companyName: true } });
+  const seenCompanies = new Set(existingLeads.map((lead) => companyKey(lead.companyName)));
 
   console.log(`📊 ${existingLeads.length} existing leads in database`);
 
-  // Process each search query
-  for (const query of SEARCH_QUERIES) {
-    console.log(`\n🔎 Searching: "${query}"`);
-    
-    const results = await searchWithTavily(query);
+  // Run all searches in parallel; Tavily latency dominates scan time.
+  const searchResults = await Promise.all(
+    SEARCHES.map(async (search) => ({ search, results: await searchWithTavily(search.query) }))
+  );
+
+  for (const { search, results } of searchResults) {
+    const { query } = search;
     sourcesBreakdown[query] = results.length;
-    
-    console.log(`   Found ${results.length} results`);
+    console.log(`\n🔎 [${search.lob}] "${query}": ${results.length} results`);
 
     for (const result of results) {
       totalCompaniesScanned++;
-      
-      // Extract company info from search result
+
       const domain = extractDomain(result.url);
-      if (!domain || processedDomains.has(domain)) {
-        continue;
-      }
+      if (!domain) continue;
 
-      // Extract company name from domain
       const companyName = extractCompanyName(result);
-      
-      // Skip if it's a blog/article or couldn't extract company name
       if (!companyName) {
-        console.log(`   ⏭️  Skipped: ${result.title} (blog/article)`);
-        console.log(`      🔍 DEBUG: URL=${result.url}, domain=${domain}`);
+        console.log(`   ⏭️  Skipped: ${result.title} (no company name)`);
         continue;
       }
 
-      processedDomains.add(domain);
-      
-      console.log(`   ➡️  Processing: ${companyName} (${domain})`);
-
-      // Extract actual company website (not job board domain)
-      let companyWebsite = `https://${companyName.toLowerCase().replace(/\s+/g, '')}.com`;
-      
-      // Use Tavily data only (no AI, no Apollo)
-      const companyData = {
-        companyName,
-        industry: 'Technology',
-        employees: null,
-        revenue: null,
-        techStack: [],
-        website: companyWebsite,
-        hq: 'USA',
-      };
-
-      console.log(`      📊 Data source: Tavily (${domain})`);
-
-      // Determine LOB, service, and intent based on source type
-      let lob = 'Cloud';
-      let recommendedService = 'Cloud Migration Services';
-      let intentSignal = '';
-      
-      // Job board signals - extract role from title
-      if (domain?.includes('greenhouse') || domain?.includes('lever') || domain?.includes('jobs')) {
-        // Extract role from titles like "DevOps Engineer at Company" or "Senior Backend Engineer"
-        const roleMatch = result.title.match(/(Senior |Junior |Lead |Staff )?(DevOps|Cloud|Backend|Infrastructure|SRE|Platform|Site Reliability|Software|Full[- ]?Stack|Data)\s+(Engineer|Architect|Developer)/i);
-        if (roleMatch) {
-          const role = roleMatch[0].trim();
-          intentSignal = `Hiring ${role}`;
-          lob = 'Staffing';
-          recommendedService = 'IT Contract Staffing';
-        } else {
-          // Fallback: extract any engineering role
-          const genericRole = result.title.match(/([A-Z][a-z]+\s)*(Engineer|Developer|Architect)/i);
-          if (genericRole) {
-            intentSignal = `Hiring ${genericRole[0]}`;
-            lob = 'Staffing';
-            recommendedService = 'IT Contract Staffing';
-          }
-        }
-      }
-      // Funding announcements
-      else if (query.includes('Series B') || query.includes('funding')) {
-        lob = 'Staffing';
-        recommendedService = 'IT Contract Staffing';
-        intentSignal = 'Recent Series B funding';
-      }
-      // RFP/Procurement
-      else if (domain?.includes('sam.gov') || query.includes('RFP')) {
-        lob = 'Cloud';
-        recommendedService = 'Cloud Migration Services';
-        intentSignal = 'RFP for cloud migration';
-      }
-      
-      // Skip if no meaningful intent extracted
-      if (!intentSignal || intentSignal.length < 10) {
-        console.log(`      ⏭️  Skipped: No clear intent signal`);
+      const key = companyKey(companyName);
+      if (!key || NOT_COMPANIES.has(key) || seenCompanies.has(key)) {
         continue;
       }
 
-      if (query.includes('ERP') || query.includes('NetSuite')) {
-        lob = 'ERP';
-        recommendedService = 'NetSuite & ERP Services';
-        intentSignal = 'ERP modernization';
-      } else if (query.includes('DevOps') || query.includes('infrastructure')) {
-        lob = 'Solution';
-        recommendedService = 'Solution Engineering';
-        intentSignal = 'Infrastructure needs';
-      } else if (query.includes('offshore') || query.includes('dedicated')) {
-        lob = 'Offshore';
-        recommendedService = 'India Dedicated Teams';
-        intentSignal = 'Team expansion';
+      // Hiring posts: name the role; otherwise use the search's signal.
+      let intentSignal = search.intent;
+      if (isJobBoard(domain)) {
+        const role = result.title.match(ROLE_PATTERN);
+        if (role) intentSignal = `Hiring ${role[0].trim()}`;
       }
 
-      // Assign score based on domain relevance (60-85 range)
+      seenCompanies.add(key);
+      console.log(`   ➡️  ${companyName} (${search.lob}): ${intentSignal}`);
+
+      const careerDomain =
+        domain.startsWith('careers.') || domain.startsWith('jobs.') ? domain.replace(/^(careers|jobs)\./, '') : null;
+      const companyWebsite =
+        careerDomain && !isJobBoard(domain)
+          ? `https://${careerDomain}`
+          : `https://${companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`;
+
+      // Placeholder score until OpenAI scoring is enabled.
       const score = Math.floor(Math.random() * (85 - 60 + 1)) + 60;
 
-      // Save lead immediately
       try {
         await prisma.lead.create({
           data: {
-            companyName: companyName,
-            industry: companyData.industry,
-            website: companyData.website,
-            employees: companyData.employees,
-            revenue: companyData.revenue,
-            hq: companyData.hq,
-            lob: lob,
-            intentSignal: intentSignal,
-            recommendedService: recommendedService,
+            companyName,
+            industry: 'Technology',
+            website: companyWebsite,
+            employees: null,
+            revenue: null,
+            hq: 'USA',
+            lob: search.lob,
+            intentSignal,
+            recommendedService: search.service,
             leadScore: score,
             source: `${query} (Tavily)`,
-            outreachEmail: `contact@${domain}`,
+            outreachEmail: `contact@${companyWebsite.replace(/^https?:\/\//, '')}`,
             signals: {
-              techStack: companyData.techStack,
+              techStack: [],
               whyThisLead: [
-                `Found via ${query}`,
-                `Company website: ${domain}`,
-                `Discovery source: Tavily search`
+                intentSignal,
+                `Found via ${search.lob} search`,
+                `Source: ${domain}`,
               ],
               searchContext: result.content?.substring(0, 500),
               dataSource: 'Tavily',
@@ -334,19 +346,15 @@ export async function discoverLeads() {
       } catch (error) {
         console.error(`      ❌ Error saving lead:`, error.message);
       }
-
-      // Rate limiting delay
-      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
 
-  // Update scan run summary
   await prisma.scanRun.update({
     where: { id: scanRun.id },
     data: {
       completedAt: new Date(),
       companiesScanned: totalCompaniesScanned,
-      newLeadsFound: newLeadsFound,
+      newLeadsFound,
       sources: sourcesBreakdown,
     },
   });
@@ -354,13 +362,13 @@ export async function discoverLeads() {
   const summary = {
     scanRunId: scanRun.id,
     companiesScanned: totalCompaniesScanned,
-    newLeadsFound: newLeadsFound,
+    newLeadsFound,
     sources: sourcesBreakdown,
     duration: new Date() - scanRun.startedAt,
   };
 
   console.log('\n✅ Lead discovery completed!');
-  console.log(`📊 Summary: ${newLeadsFound} new leads from ${totalCompaniesScanned} companies scanned`);
+  console.log(`📊 Summary: ${newLeadsFound} new leads from ${totalCompaniesScanned} results scanned`);
 
   return summary;
 }
