@@ -4,6 +4,8 @@ import { use } from 'react';
 import useSWR from 'swr';
 import { leadsAPI } from '@/lib/api';
 import { lobBadge, lobLabel } from '@/lib/lobs';
+import { industryBadge, isPriorityIndustry } from '@/lib/industries';
+import { describeSource, hostname, isLinkedInLead } from '@/lib/sources';
 import { useRouter } from 'next/navigation';
 
 // Suggested approach and buyer roles per line of business. These are
@@ -82,39 +84,6 @@ const TECH_KEYWORDS = [
   'React', 'PostgreSQL', 'Snowflake', 'AI agents', 'LLM',
 ];
 
-const JOB_BOARDS: Record<string, string> = {
-  'greenhouse.io': 'Greenhouse',
-  'lever.co': 'Lever',
-};
-const NEWS_SITES: Record<string, string> = {
-  'businesswire.com': 'Business Wire',
-  'prnewswire.com': 'PR Newswire',
-  'techcrunch.com': 'TechCrunch',
-};
-
-function hostname(url?: string) {
-  try {
-    return url ? new URL(url).hostname.replace(/^www\./, '') : '';
-  } catch {
-    return '';
-  }
-}
-
-function describeSource(url?: string) {
-  const host = hostname(url);
-  const match = (sites: Record<string, string>) => Object.entries(sites).find(([domain]) => host.endsWith(domain))?.[1];
-
-  const board = match(JOB_BOARDS);
-  if (board) return { type: 'Job posting', where: board, meaning: 'The company is hiring for this skill: they have the need now.' };
-  if (host.startsWith('jobs.') || host.startsWith('careers.')) {
-    return { type: 'Job posting', where: host, meaning: 'The company is hiring for this skill: they have the need now.' };
-  }
-  const news = match(NEWS_SITES);
-  if (news) return { type: 'Press release', where: news, meaning: 'Announced in the news. Check that the company is the one buying, not selling.' };
-  if (host.endsWith('sam.gov')) return { type: 'Government RFP', where: 'SAM.gov', meaning: 'A public request for proposals: an open buying opportunity.' };
-  return { type: 'Web page', where: host || 'Unknown', meaning: 'Found on the web. Verify the signal before outreach.' };
-}
-
 // Phrases typical of companies selling services or products rather than buying.
 const VENDOR_PATTERNS =
   /\b(consulting firm|consultancy|IT services|technology services|design and technology services|digital accelerator|systems integrator|solutions provider|leading provider|on behalf of a partner|our clients|helps (companies|enterprises|organizations)|announced the availability|launches|today launched|partnership with|our .{0,20}practice)\b/i;
@@ -123,6 +92,21 @@ const NON_PROSPECT_EMAIL_DOMAINS = /(greenhouse\.io|lever\.co|businesswire\.com|
 
 const linkedInPeople = (role: string, company: string) =>
   `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${role} ${company}`)}`;
+
+const formatDate = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+
+// "3 days ago", "5 months ago", "2 years ago".
+function timeAgo(iso: string) {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (days < 1) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30.4);
+  if (months < 12) return `${months} month${months === 1 ? '' : 's'} ago`;
+  const years = Math.floor(days / 365);
+  return `${years} year${years === 1 ? '' : 's'} ago`;
+}
 
 export default function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
@@ -163,6 +147,11 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   const source = describeSource(sourceUrl);
   const playbook = PLAYBOOK[lead.lob];
   const company: string = lead.companyName;
+  const fromLinkedIn = isLinkedInLead(lead);
+  const authorProfileUrl: string | undefined = signals.authorProfileUrl || undefined;
+  const postedAt: string | undefined = signals.postedAt || undefined;
+  const postedAtSource: string | undefined = signals.postedAtSource || undefined;
+  const postedDaysAgo = postedAt ? (Date.now() - new Date(postedAt).getTime()) / 86400000 : null;
 
   const techMentioned = TECH_KEYWORDS.filter((tech) => {
     const escaped = tech.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -193,15 +182,24 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-semibold text-gray-900">{company}</h1>
+              {fromLinkedIn && (
+                <p className="text-sm text-gray-600 mt-1">
+                  Asked on LinkedIn{postedAt ? ` on ${formatDate(postedAt)}` : ''}.
+                  Their company isn&apos;t identified yet: check their profile.
+                </p>
+              )}
               <div className="flex flex-wrap items-center gap-2 mt-2 text-sm">
                 <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${lobBadge(lead.lob)}`}>
                   {lobLabel(lead.lob)}
+                </span>
+                <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${industryBadge(lead.industry || 'Other')}`}>
+                  {lead.industry || 'Other'}{isPriorityIndustry(lead.industry) ? ' ★ Priority' : ''}
                 </span>
                 <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700">
                   {source.type} · {source.where}
                 </span>
                 <span className="text-gray-500">
-                  Discovered {new Date(lead.discoveredAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                  {postedAt ? `Posted ${formatDate(postedAt)} (${timeAgo(postedAt)})` : `Discovered ${formatDate(lead.discoveredAt)}`}
                 </span>
               </div>
             </div>
@@ -219,14 +217,25 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 📄 View original {source.type.toLowerCase()}
               </a>
             )}
-            <a
-              href={`https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(company)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={actionLink}
-            >
-              💼 LinkedIn company
-            </a>
+            {fromLinkedIn ? (
+              <a
+                href={authorProfileUrl || `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(company)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={actionLink}
+              >
+                👤 Author&apos;s LinkedIn profile
+              </a>
+            ) : (
+              <a
+                href={`https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(company)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={actionLink}
+              >
+                💼 LinkedIn company
+              </a>
+            )}
             <a
               href={`https://www.google.com/search?q=${encodeURIComponent(`"${company}"`)}`}
               target="_blank"
@@ -257,6 +266,58 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Main column */}
           <div className="lg:col-span-2 space-y-4">
+            <section className="bg-white border border-gray-200 rounded-lg p-6">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Where we found this</h2>
+              <dl className="grid grid-cols-1 sm:grid-cols-[150px_1fr] gap-x-4 gap-y-3 text-sm">
+                <dt className="text-gray-500">Discovery link</dt>
+                <dd>
+                  {sourceUrl ? (
+                    <a
+                      href={sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:text-blue-800 break-all"
+                    >
+                      {sourceUrl} ↗
+                    </a>
+                  ) : (
+                    <span className="text-gray-500">Not recorded</span>
+                  )}
+                </dd>
+
+                <dt className="text-gray-500">Source</dt>
+                <dd className="text-gray-900">{source.type} on {source.where}</dd>
+
+                <dt className="text-gray-500">Posted online</dt>
+                <dd>
+                  {postedAt ? (
+                    <>
+                      <span className="text-gray-900 font-medium">{formatDate(postedAt)}</span>
+                      <span className="text-gray-500"> · {timeAgo(postedAt)}</span>
+                      {postedAtSource && <div className="text-xs text-gray-400 mt-0.5">Date from {postedAtSource}</div>}
+                      {postedDaysAgo !== null && postedDaysAgo > 365 && (
+                        <div className="mt-1 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">
+                          Over a year old: the need may already be met. Confirm it&apos;s still current.
+                        </div>
+                      )}
+                      {postedDaysAgo !== null && postedDaysAgo > 90 && postedDaysAgo <= 365 && source.type === 'Job posting' && (
+                        <div className="mt-1 text-xs text-gray-500">
+                          Posted over 3 months ago: the role may be filled. Check the link is still live.
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-gray-500">
+                      {signals.postedAtChecked ? 'The source doesn’t publish a date' : 'Not looked up yet'}
+                    </span>
+                  )}
+                </dd>
+
+                <dt className="text-gray-500">Found by Lead Engine</dt>
+                <dd className="text-gray-900">{formatDate(lead.discoveredAt)}</dd>
+              </dl>
+            </section>
+
             <section className="bg-white border border-gray-200 rounded-lg p-6">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Buying signal</h2>
               <p className="text-lg font-medium text-gray-900">⚡ {lead.intentSignal || 'No signal recorded'}</p>
@@ -315,18 +376,32 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
             {playbook && (
               <section className="bg-white border border-gray-200 rounded-lg p-5">
                 <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Who to contact</h2>
+                {fromLinkedIn && (
+                  <div className="mb-3 pb-3 border-b border-gray-100 text-sm">
+                    <div className="font-medium text-gray-900">{company}</div>
+                    <div className="text-gray-500 text-xs">Asked for this service: reply to the post or message them.</div>
+                    {sourceUrl && (
+                      <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 text-sm">
+                        Open their post →
+                      </a>
+                    )}
+                    <div className="text-xs text-gray-400 mt-2">Once you know their company, these roles there may also be involved:</div>
+                  </div>
+                )}
                 <ul className="space-y-2">
                   {playbook.contacts.map((role) => (
                     <li key={role} className="flex items-center justify-between text-sm">
                       <span className="text-gray-800">{role}</span>
-                      <a
-                        href={linkedInPeople(role, company)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:text-blue-800"
-                      >
-                        Find on LinkedIn →
-                      </a>
+                      {!fromLinkedIn && (
+                        <a
+                          href={linkedInPeople(role, company)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800"
+                        >
+                          Find on LinkedIn →
+                        </a>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -340,7 +415,9 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                       <div className="text-xs text-gray-400 mt-0.5">Guessed general inbox, not verified</div>
                     </>
                   ) : (
-                    <div className="text-gray-600">No reliable email yet. Use the LinkedIn links above.</div>
+                    <div className="text-gray-600">
+                      {fromLinkedIn ? 'No email: contact them through LinkedIn.' : 'No reliable email yet. Use the LinkedIn links above.'}
+                    </div>
                   )}
                 </div>
               </section>
@@ -349,6 +426,12 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
             <section className="bg-white border border-gray-200 rounded-lg p-5">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Company snapshot</h2>
               <dl className="space-y-2 text-sm">
+                {fromLinkedIn && (
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-gray-500">Company</dt>
+                    <dd className="text-gray-900 text-right">Not identified yet</dd>
+                  </div>
+                )}
                 <div className="flex justify-between gap-4">
                   <dt className="text-gray-500">Industry</dt>
                   <dd className="text-gray-900 text-right">{lead.industry || 'Unknown'}</dd>

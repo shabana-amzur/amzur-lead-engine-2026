@@ -3,6 +3,8 @@
 import useSWR from 'swr';
 import { leadsAPI, scanAPI } from '@/lib/api';
 import { LOB_OPTIONS, LOBS, lobBadge, lobLabel } from '@/lib/lobs';
+import { INDUSTRY_OPTIONS, PRIORITY_INDUSTRIES, industryBadge, isPriorityIndustry } from '@/lib/industries';
+import { describeSource, isLinkedInLead } from '@/lib/sources';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -13,12 +15,14 @@ const FILTER_CHIPS = [
   { value: 'Funding', label: 'Funding' },
   { value: 'Tender', label: 'Tender' },
   { value: 'AI', label: 'AI' },
+  { value: 'LinkedIn', label: 'LinkedIn' },
   ...LOB_OPTIONS.map(({ value, label }) => ({ value, label })),
 ];
 
 export default function DashboardPage() {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState('all');
+  const [activeIndustry, setActiveIndustry] = useState('all');
   // Which sidebar item is highlighted. 'dashboard' and 'all' both show every
   // lead; 'all' additionally jumps to the table.
   const [activeView, setActiveView] = useState('dashboard');
@@ -31,6 +35,7 @@ export default function DashboardPage() {
   const selectView = (view: string) => {
     setActiveView(view);
     setActiveFilter(view === 'dashboard' || view === 'all' ? 'all' : view);
+    if (view === 'dashboard' || view === 'all') setActiveIndustry('all');
 
     if (view === 'dashboard') {
       document.getElementById('dashboard-main')?.scrollTo({ top: 0, behavior: 'smooth' });
@@ -107,7 +112,14 @@ export default function DashboardPage() {
 
   // Filter leads
   const getFilteredLeads = () => {
+    const byIndustry =
+      activeIndustry === 'all' ? leads : leads.filter((l: any) => (l.industry || 'Other') === activeIndustry);
+    return filterBySignal(byIndustry);
+  };
+
+  const filterBySignal = (leads: any[]) => {
     if (activeFilter === 'all') return leads;
+    if (activeFilter === 'LinkedIn') return leads.filter((l: any) => isLinkedInLead(l));
     if (activeFilter === 'Hiring') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('hiring') || l.intentSignal?.toLowerCase().includes('roles'));
     if (activeFilter === 'Funding') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('funding'));
     if (activeFilter === 'Tender') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('tender') || l.intentSignal?.toLowerCase().includes('rfp'));
@@ -117,6 +129,7 @@ export default function DashboardPage() {
   };
 
   const filteredLeads = getFilteredLeads();
+  const industryCount = (industry: string) => leads.filter((l: any) => (l.industry || 'Other') === industry).length;
 
   const getScoreClass = (score: number) => {
     if (score >= 80) return 'bg-emerald-100 text-emerald-800';
@@ -179,6 +192,19 @@ export default function DashboardPage() {
               <span className="text-[10px] text-gray-400">
                 {leads.filter((l: any) => l.lob === lob).length}
               </span>
+            </button>
+          ))}
+
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2 mt-4">Priority Industries</div>
+          {PRIORITY_INDUSTRIES.map(({ value, label, icon }) => (
+            <button
+              type="button"
+              key={value}
+              onClick={() => setActiveIndustry(activeIndustry === value ? 'all' : value)}
+              className={navItemClass(activeIndustry === value)}
+            >
+              <span className="flex items-center gap-2"><span>{icon}</span> {label}</span>
+              <span className="text-[10px] text-gray-400">{industryCount(value)}</span>
             </button>
           ))}
 
@@ -295,6 +321,29 @@ export default function DashboardPage() {
             </span>
           </div>
 
+          <div className="flex gap-2 mb-4 flex-wrap items-center">
+            <span className="text-xs text-gray-600">Industry:</span>
+            {[{ value: 'all', label: 'All', icon: '', priority: false }, ...INDUSTRY_OPTIONS].map(({ value, label, icon, priority }) => {
+              const count = value === 'all' ? totalLeads : industryCount(value);
+              if (value !== 'all' && !priority && count === 0) return null;
+              return (
+                <button
+                  key={value}
+                  onClick={() => setActiveIndustry(value)}
+                  className={`px-3 py-1 text-xs rounded-full border transition-all ${
+                    activeIndustry === value
+                      ? 'bg-blue-100 text-blue-700 border-transparent'
+                      : priority
+                        ? 'bg-white text-gray-800 border-gray-400 hover:bg-gray-50 font-medium'
+                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  {icon ? `${icon} ` : ''}{label}{priority ? ' ★' : ''} <span className="text-gray-400">({count})</span>
+                </button>
+              );
+            })}
+          </div>
+
           {/* Table */}
           <div id="opportunities" className="bg-white border border-gray-200 rounded-lg overflow-hidden scroll-mt-4">
             <div className="flex justify-between items-center px-4 py-3 border-b border-gray-200">
@@ -327,7 +376,7 @@ export default function DashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredLeads.slice(0, 12).map((lead: any) => (
+                    {filteredLeads.map((lead: any) => (
                       <tr 
                         key={lead.id}
                         onClick={() => router.push(`/dashboard/leads/${lead.id}`)}
@@ -335,8 +384,15 @@ export default function DashboardPage() {
                       >
                         <td className="px-4 py-3 text-sm">
                           <div className="font-medium text-gray-900">{lead.companyName}</div>
+                          {isLinkedInLead(lead) && (
+                            <div className="text-[10px] text-blue-700 mt-0.5">in LinkedIn post · company unknown</div>
+                          )}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{lead.industry}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-medium ${industryBadge(lead.industry || 'Other')}`}>
+                            {lead.industry || 'Other'}{isPriorityIndustry(lead.industry) ? ' ★' : ''}
+                          </span>
+                        </td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-medium ${getLobBadge(lead.lob)}`}>
                             {lobLabel(lead.lob)}
@@ -353,7 +409,17 @@ export default function DashboardPage() {
                             {lead.leadScore}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-xs text-gray-500">{lead.source?.split('(')[0].trim()}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500">
+                          {(() => {
+                            const source = describeSource(lead.signals?.tavilyUrl);
+                            return (
+                              <>
+                                <div className="text-gray-700">{source.type}</div>
+                                <div className="text-[10px] text-gray-400">{source.where}</div>
+                              </>
+                            );
+                          })()}
+                        </td>
                         <td className="px-4 py-3 text-xs text-gray-500">
                           {new Date(lead.discoveredAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         </td>
