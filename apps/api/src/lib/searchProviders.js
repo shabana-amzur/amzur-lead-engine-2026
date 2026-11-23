@@ -15,10 +15,17 @@ const PROVIDERS = [
   {
     name: 'tavily',
     key: () => process.env.TAVILY_API_KEY,
-    async search(query, { depth = 'basic', maxResults = 10 } = {}) {
+    async search(query, { depth = 'basic', maxResults = 10, recentDays } = {}) {
       const { data } = await axios.post(
         'https://api.tavily.com/search',
-        { api_key: process.env.TAVILY_API_KEY, query, search_depth: depth, max_results: maxResults },
+        {
+          api_key: process.env.TAVILY_API_KEY,
+          query,
+          search_depth: depth,
+          max_results: maxResults,
+          // Tavily supports day/week/month/year windows; results are filtered by exact age afterwards.
+          ...(recentDays ? { time_range: recentDays <= 1 ? 'day' : recentDays <= 7 ? 'week' : 'month' } : {}),
+        },
         { timeout: TIMEOUT_MS }
       );
       return (data.results || []).map((r) => ({
@@ -32,10 +39,15 @@ const PROVIDERS = [
   {
     name: 'serper',
     key: () => process.env.SERPER_API_KEY,
-    async search(query, { maxResults = 10 } = {}) {
+    async search(query, { maxResults = 10, recentDays } = {}) {
       const { data } = await axios.post(
         'https://google.serper.dev/search',
-        { q: query, num: maxResults },
+        {
+          q: query,
+          num: maxResults,
+          // Google's "past day/week/month" filter; results are filtered by exact age afterwards.
+          ...(recentDays ? { tbs: recentDays <= 1 ? 'qdr:d' : recentDays <= 7 ? 'qdr:w' : 'qdr:m' } : {}),
+        },
         { headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' }, timeout: TIMEOUT_MS }
       );
       return (data.organic || []).map((r) => ({

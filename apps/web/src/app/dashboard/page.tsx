@@ -374,8 +374,14 @@ export default function DashboardPage() {
                 Clear filters
               </button>
             )}
-            <span className="ml-auto text-xs text-gray-500">
+            <span className="ml-auto text-xs text-gray-500 text-right">
               Showing {filteredLeads.length} of {totalLeads}
+              {leadsData?.recentDays ? (
+                <span className="block text-[10px] text-gray-400">
+                  Posted in the last {leadsData.recentDays} days
+                  {leadsData.hiddenOlder ? ` · ${leadsData.hiddenOlder} older leads hidden` : ''}
+                </span>
+              ) : null}
             </span>
           </div>
 

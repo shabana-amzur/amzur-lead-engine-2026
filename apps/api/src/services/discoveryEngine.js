@@ -9,6 +9,7 @@ import { classifyLinkedInPost } from '../lib/linkedinFilters';
 import { findRequirementDetails } from '../lib/requirementDetails';
 import { searchWeb } from '../lib/searchProviders';
 import { searchNews } from '../lib/freeSources';
+import { LEAD_MAX_AGE_DAYS, isRecent } from '../config/recency';
 
 // OpenAI client for scoreWithOpenAI (not yet used by the scan). Created only
 // when a key is configured: constructing it without one throws, which would
@@ -295,7 +296,7 @@ function scoreLead(industry, min, max) {
 
 // ---- LinkedIn posts ----
 
-const LINKEDIN_MAX_AGE_DAYS = 180;
+const LINKEDIN_MAX_AGE_DAYS = LEAD_MAX_AGE_DAYS;
 
 // LinkedIn activity IDs embed the post time: the top bits are a millisecond timestamp.
 function linkedInPostDate(url) {
@@ -380,7 +381,7 @@ function describesItselfAsSeller(companyName, text) {
 // A job title or page label picked up instead of a company name,
 // e.g. "Senior Software Engineer" or "Job Application for UiPath".
 function looksLikeJobTitle(name) {
-  return /^job application\b/i.test(name) || /\b(engineer|developer|architect|administrator|analyst|consultant)s?$/i.test(name.trim());
+  return /^job application\b/i.test(name) || /\b(jobs|careers|job board|openings)\b/i.test(name) || /\b(engineer|developer|architect|administrator|analyst|consultant)s?$/i.test(name.trim());
 }
 
 function isJobBoard(domain) {
@@ -398,7 +399,7 @@ let lastSearchError = null;
 // shorter but enough to identify the company and signal.
 async function searchWithTavily(query, depth = 'basic') {
   // Tries Tavily, then Serper (whichever have API keys set).
-  const { results, provider, errors } = await searchWeb(query, { depth, maxResults: 10 });
+  const { results, provider, errors } = await searchWeb(query, { depth, maxResults: 10, recentDays: LEAD_MAX_AGE_DAYS });
   if (!provider && errors.length) {
     const last = errors[errors.length - 1];
     lastSearchError = { status: last.status, message: last.message, provider: last.provider };
@@ -430,7 +431,7 @@ function extractCompanyName(result) {
     const atMatch = result.title.match(/at\s+([A-Z][a-zA-Z0-9\s&]+?)(?:\s*[-|]|$)/);
     if (atMatch) return atMatch[1].trim();
     
-    const dashMatch = result.title.match(/^([A-Z][a-zA-Z0-9\s&]+?)\s*[-–|]/);
+    const dashMatch = result.title.match(/^([A-Z][a-zA-Z0-9\s&]+?)\s+[-–|]\s+/);
     if (dashMatch) return dashMatch[1].trim();
   }
   
@@ -560,7 +561,7 @@ function feedRequirement(result) {
 
 async function fetchForSearch(search) {
   try {
-    if (search.kind === 'news') return await searchNews(search.query);
+    if (search.kind === 'news') return await searchNews(search.query, { days: LEAD_MAX_AGE_DAYS });
   } catch (error) {
     console.error(`Free source error for "${search.query}":`, error.message);
     return [];
@@ -585,7 +586,7 @@ async function saveLinkedInLead(search, result, seenCompanies) {
   }
 
   const postedAt = linkedInPostDate(url);
-  if (postedAt && Date.now() - postedAt.getTime() > LINKEDIN_MAX_AGE_DAYS * 86400000) {
+  if (!postedAt || Date.now() - postedAt.getTime() > LINKEDIN_MAX_AGE_DAYS * 86400000) {
     console.log(`   ⏭️  Skipped LinkedIn post (older than ${LINKEDIN_MAX_AGE_DAYS} days): ${url}`);
     return false;
   }
@@ -658,7 +659,8 @@ export async function enrichExistingLeads(limit = 15) {
     return {
       date: !signals.postedAtChecked,
       requirement: !signals.requirementChecked,
-      profile: signals.leadType !== 'linkedin_post' && !signals.companyChecked,
+      // Profiles cost a search credit: only for leads recent enough to be shown.
+      profile: signals.leadType !== 'linkedin_post' && !signals.companyChecked && isRecent(signals.postedAt),
     };
   };
   const pending = leads.filter((lead) => Object.values(needs(lead)).some(Boolean)).slice(0, limit);
@@ -820,12 +822,18 @@ export async function discoverLeads() {
       pendingSaves.push((async () => {
       try {
         const fromFeed = search.kind === 'news';
-        const [published, profile, requirement] = await Promise.all([
-          fromFeed
-            ? result.published_date
-              ? { date: result.published_date, method: `News feed (${result.publisher || 'Google News'})` }
-              : null
-            : findPublishedDate(result.url, result.published_date),
+        const published = fromFeed
+          ? result.published_date
+            ? { date: result.published_date, method: `News feed (${result.publisher || 'Google News'})` }
+            : null
+          : await findPublishedDate(result.url, result.published_date);
+        // Only recent needs: skip sources older than the window or without a date,
+        // before spending a search credit on the company profile.
+        if (!published || !isRecent(published.date)) {
+          console.log(`   ⏭️  Skipped: ${companyName} (${published ? `posted ${published.date.slice(0, 10)}` : 'no posting date'}, older than ${LEAD_MAX_AGE_DAYS} days or unknown)`);
+          return;
+        }
+        const [profile, requirement] = await Promise.all([
           findCompanyProfile(companyName, { industry, sourceUrl: result.url }).catch(() => null),
           fromFeed ? feedRequirement(result) : findRequirementDetails(result.url, { companyName, title: result.title, text: result.content }).catch(() => undefined),
         ]);

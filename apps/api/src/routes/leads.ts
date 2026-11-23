@@ -1,6 +1,8 @@
 import { Router, Response } from 'express';
 import prisma from '../lib/prisma';
 import { AuthRequest, authenticateToken } from '../middleware/auth';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { LEAD_MAX_AGE_DAYS, isRecent } = require('../config/recency');
 
 const router = Router();
 
@@ -16,6 +18,9 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     const maxScore = req.query.maxScore ? parseInt(req.query.maxScore as string) : undefined;
     const source = req.query.source as string;
     const search = req.query.search as string;
+    // Only leads posted online within the recency window, unless includeOlder=true.
+    const includeOlder = req.query.includeOlder === 'true';
+    const recentDays = parseInt(req.query.recentDays as string) || LEAD_MAX_AGE_DAYS;
 
     // Build filter conditions
     const where: any = {};
@@ -42,19 +47,19 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       ];
     }
 
-    // Get total count for pagination
-    const total = await prisma.lead.count({ where });
-    
-    // Fetch leads with pagination
-    const leads = await prisma.lead.findMany({
-      where,
-      orderBy: { leadScore: 'desc' },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
+    // The posting date lives in the signals JSON, so recency is filtered here
+    // and pagination applied afterwards (lead volumes are small).
+    const matching = await prisma.lead.findMany({ where, orderBy: { leadScore: 'desc' } });
+    const visible = includeOlder
+      ? matching
+      : matching.filter((lead: any) => isRecent(lead.signals?.postedAt, recentDays));
+    const total = visible.length;
+    const leads = visible.slice((page - 1) * limit, page * limit);
 
     res.json({
       leads,
+      recentDays: includeOlder ? null : recentDays,
+      hiddenOlder: matching.length - visible.length,
       pagination: {
         total,
         page,
