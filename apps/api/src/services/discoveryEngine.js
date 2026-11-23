@@ -43,18 +43,50 @@ const SEARCHES = [
     service: 'NetSuite & ERP Services',
     intent: 'ERP modernization',
   },
-  // Staffing
+  // Application Development
   {
-    query: 'site:jobs.lever.co OR site:boards.greenhouse.io "Senior Backend Engineer" OR "Full Stack Engineer"',
-    lob: 'Staffing',
-    service: 'IT Contract Staffing',
-    intent: 'Hiring engineers',
+    query: 'site:greenhouse.io OR site:lever.co "Senior Software Engineer" OR "Full Stack Engineer" OR "Mobile Engineer" new product',
+    lob: 'Application Development',
+    service: 'Application Development',
+    intent: 'Building new applications',
+  },
+  {
+    query: '"launches new platform" OR "custom software" OR "digital transformation initiative" announces 2026 site:businesswire.com OR site:prnewswire.com',
+    lob: 'Application Development',
+    service: 'Application Development',
+    intent: 'New digital product initiative',
   },
   {
     query: '"Series B funding" "announces" 2026 site:techcrunch.com OR site:businesswire.com',
-    lob: 'Staffing',
-    service: 'IT Contract Staffing',
+    lob: 'Application Development',
+    service: 'Application Development',
     intent: 'Recent Series B funding',
+  },
+  // Legacy Modernization
+  {
+    query: '"legacy modernization" OR "mainframe migration" OR "modernize legacy systems" announces 2026 site:businesswire.com OR site:prnewswire.com',
+    lob: 'Legacy Modernization',
+    service: 'Legacy Modernization',
+    intent: 'Modernizing legacy systems',
+  },
+  {
+    query: 'site:greenhouse.io OR site:lever.co "Mainframe Developer" OR "COBOL Developer" OR "Legacy Modernization"',
+    lob: 'Legacy Modernization',
+    service: 'Legacy Modernization',
+    intent: 'Hiring for legacy modernization',
+  },
+  // Process Automation
+  {
+    query: '"robotic process automation" OR "intelligent automation" OR "workflow automation" announces 2026 site:businesswire.com OR site:prnewswire.com',
+    lob: 'Process Automation',
+    service: 'Process Automation',
+    intent: 'Process automation initiative',
+  },
+  {
+    query: 'site:greenhouse.io OR site:lever.co "RPA Developer" OR "UiPath Developer" OR "Automation Engineer"',
+    lob: 'Process Automation',
+    service: 'Process Automation',
+    intent: 'Hiring for process automation',
   },
   // Solution Engineering
   {
@@ -80,7 +112,7 @@ const SEARCHES = [
 
 // Job titles worth turning into a "Hiring <role>" signal.
 const ROLE_PATTERN =
-  /(Senior |Junior |Lead |Staff |Principal )?(DevOps|Cloud|AWS|Azure|GCP|Backend|Infrastructure|SRE|Platform|Site Reliability|Software|Full[- ]?Stack|Data|NetSuite|ERP|Salesforce)\s+(Engineer|Architect|Developer|Administrator|Analyst|Consultant)/i;
+  /(Senior |Junior |Lead |Staff |Principal )?(DevOps|Cloud|AWS|Azure|GCP|Backend|Infrastructure|SRE|Platform|Site Reliability|Software|Full[- ]?Stack|Mobile|Data|NetSuite|ERP|Salesforce|RPA|UiPath|Automation|Mainframe|COBOL)\s+(Engineer|Architect|Developer|Administrator|Analyst|Consultant)/i;
 
 // Key used to recognise the same company across scans, e.g. "CaseGuard, Inc." -> "caseguard".
 function companyKey(name) {
@@ -91,7 +123,17 @@ function companyKey(name) {
 }
 
 // Names that are really the job board or news site, not a prospect.
-const NOT_COMPANIES = new Set(['lever', 'greenhouse', 'jobs', 'careers', 'techcrunch', 'businesswire', 'prnewswire', 'samgov', 'sam']);
+const NOT_COMPANIES = new Set([
+  'lever', 'greenhouse', 'jobs', 'careers', 'techcrunch', 'businesswire', 'prnewswire', 'samgov', 'sam',
+  // Job aggregators / recruiters that post other companies' roles.
+  'jobgether', 'recruitis',
+]);
+
+// A job title or page label picked up instead of a company name,
+// e.g. "Senior Software Engineer" or "Job Application for UiPath".
+function looksLikeJobTitle(name) {
+  return /^job application\b/i.test(name) || /\b(engineer|developer|architect|administrator|analyst|consultant)s?$/i.test(name.trim());
+}
 
 function isJobBoard(domain) {
   return !!domain && (domain.includes('greenhouse.io') || domain.includes('lever.co') || domain.startsWith('jobs.'));
@@ -192,14 +234,14 @@ Company Information:
 Based on the search context, determine:
 1. The company's actual industry (FinTech, Healthcare, SaaS, E-commerce, etc.)
 2. Intent signals (hiring, funding, RFP, modernization, cloud migration)
-3. Which Amzur service fits best: Cloud & MSP, NetSuite & ERP, USA Staffing, Solution Engineering, or India Dedicated Teams
+3. Which Amzur service fits best: Cloud & MSP, NetSuite & ERP, Solution Engineering, Application Development, Legacy Modernization, Process Automation, or India Dedicated Teams
 4. Lead quality score (1-100)
 
 Return ONLY valid JSON with this exact structure:
 {
   "score": <number 1-100>,
   "industry": "<actual industry detected from context>",
-  "lob": "<primary line of business: Cloud, ERP, Staffing, Solution, or Offshore>",
+  "lob": "<primary line of business: Cloud, ERP, Solution, Application Development, Legacy Modernization, Process Automation, or Offshore>",
   "recommendedService": "<specific Amzur service recommendation>",
   "intentSignal": "<concise buying signal, e.g., 'Hiring 5 DevOps engineers' or 'ERP modernization RFP'>",
   "whyThisLead": ["<specific reason 1>", "<specific reason 2>", "<specific reason 3>"],
@@ -288,7 +330,7 @@ export async function discoverLeads() {
       }
 
       const key = companyKey(companyName);
-      if (!key || NOT_COMPANIES.has(key) || seenCompanies.has(key)) {
+      if (!key || NOT_COMPANIES.has(key) || looksLikeJobTitle(companyName) || seenCompanies.has(key)) {
         continue;
       }
 

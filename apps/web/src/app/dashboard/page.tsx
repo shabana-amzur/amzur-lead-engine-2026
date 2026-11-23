@@ -5,14 +5,29 @@ import { leadsAPI, scanAPI } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-const LOBS = ['Cloud', 'ERP', 'Staffing', 'Solution', 'Offshore'];
-const LOB_ICONS: Record<string, string> = {
-  Cloud: '☁️',
-  ERP: '📊',
-  Staffing: '👥',
-  Solution: '💡',
-  Offshore: '🌍',
-};
+// Lines of business. `value` is what the API stores on each lead (lead.lob);
+// keep in sync with SEARCHES in apps/api/src/services/discoveryEngine.js.
+const LOB_OPTIONS = [
+  { value: 'Cloud', label: 'Cloud', icon: '☁️', badge: 'bg-blue-100 text-blue-800' },
+  { value: 'ERP', label: 'ERP', icon: '📊', badge: 'bg-purple-100 text-purple-800' },
+  { value: 'Solution', label: 'Solution Engineering', icon: '💡', badge: 'bg-orange-100 text-orange-800' },
+  { value: 'Application Development', label: 'Application Development', icon: '🧩', badge: 'bg-teal-100 text-teal-800' },
+  { value: 'Legacy Modernization', label: 'Legacy Modernization', icon: '🏛️', badge: 'bg-amber-100 text-amber-800' },
+  { value: 'Process Automation', label: 'Process Automation', icon: '⚙️', badge: 'bg-indigo-100 text-indigo-800' },
+  { value: 'Offshore', label: 'Offshore', icon: '🌍', badge: 'bg-pink-100 text-pink-800' },
+];
+const LOBS = LOB_OPTIONS.map((option) => option.value);
+const lobLabel = (lob: string) => LOB_OPTIONS.find((option) => option.value === lob)?.label ?? lob;
+
+// Filter chips: intent-signal filters first, then one chip per line of business.
+const FILTER_CHIPS = [
+  { value: 'all', label: 'All' },
+  { value: 'Hiring', label: 'Hiring' },
+  { value: 'Funding', label: 'Funding' },
+  { value: 'Tender', label: 'Tender' },
+  { value: 'AI', label: 'AI' },
+  ...LOB_OPTIONS.map(({ value, label }) => ({ value, label })),
+];
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -106,10 +121,9 @@ export default function DashboardPage() {
   // Filter leads
   const getFilteredLeads = () => {
     if (activeFilter === 'all') return leads;
-    if (activeFilter === 'Hiring') return leads.filter((l: any) => l.lob === 'Staffing' || l.intentSignal?.toLowerCase().includes('hiring') || l.intentSignal?.toLowerCase().includes('roles'));
+    if (activeFilter === 'Hiring') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('hiring') || l.intentSignal?.toLowerCase().includes('roles'));
     if (activeFilter === 'Funding') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('funding'));
     if (activeFilter === 'Tender') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('tender') || l.intentSignal?.toLowerCase().includes('rfp'));
-    if (activeFilter === 'ERP') return leads.filter((l: any) => l.lob === 'ERP');
     if (activeFilter === 'AI') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('ai'));
     if (LOBS.includes(activeFilter)) return leads.filter((l: any) => l.lob === activeFilter);
     return leads;
@@ -123,16 +137,8 @@ export default function DashboardPage() {
     return 'bg-red-100 text-red-800';
   };
 
-  const getLobBadge = (lob: string) => {
-    const badges: any = {
-      'Cloud': 'bg-blue-100 text-blue-800',
-      'ERP': 'bg-purple-100 text-purple-800',
-      'Staffing': 'bg-green-100 text-green-800',
-      'Solution': 'bg-orange-100 text-orange-800',
-      'Offshore': 'bg-pink-100 text-pink-800',
-    };
-    return badges[lob] || 'bg-gray-100 text-gray-800';
-  };
+  const getLobBadge = (lob: string) =>
+    LOB_OPTIONS.find((option) => option.value === lob)?.badge ?? 'bg-gray-100 text-gray-800';
 
   const latestScan = scanData?.scan;
   const scanHistory = historyData?.scans || [];
@@ -176,14 +182,14 @@ export default function DashboardPage() {
           </button>
 
           <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2 mt-4">LOB</div>
-          {LOBS.map(lob => (
+          {LOB_OPTIONS.map(({ value: lob, label, icon }) => (
             <button
               type="button"
               key={lob}
               onClick={() => selectView(lob)}
               className={navItemClass(activeView === lob)}
             >
-              <span className="flex items-center gap-2"><span>{LOB_ICONS[lob]}</span> {lob}</span>
+              <span className="flex items-center gap-2"><span>{icon}</span> {label}</span>
               <span className="text-[10px] text-gray-400">
                 {leads.filter((l: any) => l.lob === lob).length}
               </span>
@@ -285,7 +291,7 @@ export default function DashboardPage() {
           {/* Filters */}
           <div className="flex gap-2 mb-4 flex-wrap items-center">
             <span className="text-xs text-gray-600">Filter:</span>
-            {['all', 'Hiring', 'Funding', 'Tender', 'ERP', 'AI', 'Cloud'].map(filter => (
+            {FILTER_CHIPS.map(({ value: filter, label }) => (
               <button
                 key={filter}
                 onClick={() => applyFilter(filter)}
@@ -295,7 +301,7 @@ export default function DashboardPage() {
                     : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
                 }`}
               >
-                {filter === 'all' ? 'All' : filter}
+                {label}
               </button>
             ))}
             <span className="ml-auto text-xs text-gray-500">
@@ -347,7 +353,7 @@ export default function DashboardPage() {
                         <td className="px-4 py-3 text-sm text-gray-600">{lead.industry}</td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-medium ${getLobBadge(lead.lob)}`}>
-                            {lead.lob}
+                            {lobLabel(lead.lob)}
                           </span>
                         </td>
                         <td className="px-4 py-3">

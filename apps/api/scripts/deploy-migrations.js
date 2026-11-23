@@ -43,14 +43,16 @@ if (process.env.VERCEL_ENV === 'production') {
     process.exit(seed.status ?? 1);
   }
 
-  // Cleanup of duplicate leads. Non-fatal: a failure here shouldn't block the deploy.
-  const dedupe = spawnSync(process.execPath, [path.join(__dirname, 'dedupe-leads.js')], {
-    cwd: path.join(repositoryRoot, 'apps', 'api'),
-    stdio: 'inherit',
-  });
+  // Data cleanups. Non-fatal: a failure here shouldn't block the deploy.
+  for (const script of ['dedupe-leads.js', 'remove-staffing-leads.js']) {
+    const cleanup = spawnSync(process.execPath, [path.join(__dirname, script)], {
+      cwd: path.join(repositoryRoot, 'apps', 'api'),
+      stdio: 'inherit',
+    });
 
-  if (dedupe.error || dedupe.status !== 0) {
-    console.warn('Duplicate lead cleanup did not complete; continuing deploy.');
+    if (cleanup.error || cleanup.status !== 0) {
+      console.warn(`${script} did not complete; continuing deploy.`);
+    }
   }
 
   process.exit(0);
