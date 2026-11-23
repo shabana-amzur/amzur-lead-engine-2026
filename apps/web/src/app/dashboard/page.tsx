@@ -2,45 +2,84 @@
 
 import useSWR from 'swr';
 import { leadsAPI, scanAPI } from '@/lib/api';
-import { LOB_OPTIONS, LOBS, lobBadge, lobLabel } from '@/lib/lobs';
+import { LOB_OPTIONS, lobBadge, lobLabel } from '@/lib/lobs';
 import { INDUSTRY_OPTIONS, PRIORITY_INDUSTRIES, industryBadge, isPriorityIndustry } from '@/lib/industries';
 import { describeSource, isLinkedInLead } from '@/lib/sources';
+import { SIGNAL_TYPES, SOURCE_TYPES, signalType, sourceType } from '@/lib/signals';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-// Filter chips: intent-signal filters first, then one chip per line of business.
-const FILTER_CHIPS = [
-  { value: 'all', label: 'All' },
-  { value: 'Hiring', label: 'Hiring' },
-  { value: 'Funding', label: 'Funding' },
-  { value: 'Tender', label: 'Tender' },
-  { value: 'AI', label: 'AI' },
-  { value: 'LinkedIn', label: 'LinkedIn' },
-  ...LOB_OPTIONS.map(({ value, label }) => ({ value, label })),
-];
+type Filters = { source: string; signal: string; service: string; industry: string };
+const NO_FILTERS: Filters = { source: 'all', signal: 'all', service: 'all', industry: 'all' };
+
+function matchesFilters(lead: any, filters: Filters) {
+  return (
+    (filters.source === 'all' || sourceType(lead) === filters.source) &&
+    (filters.signal === 'all' || signalType(lead) === filters.signal) &&
+    (filters.service === 'all' || lead.lob === filters.service) &&
+    (filters.industry === 'all' || (lead.industry || 'Other') === filters.industry)
+  );
+}
+
+// A compact labelled dropdown for the filter bar.
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string; count: number }[];
+}) {
+  const active = value !== 'all';
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-gray-600">
+      <span>{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className={`text-xs rounded-md border px-2 py-1.5 pr-7 bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 ${
+          active ? 'border-blue-400 text-blue-700 font-medium' : 'border-gray-300 text-gray-700'
+        }`}
+      >
+        <option value="all">All</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value} disabled={option.count === 0 && option.value !== value}>
+            {option.label} ({option.count})
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [activeFilter, setActiveFilter] = useState('all');
-  const [activeIndustry, setActiveIndustry] = useState('all');
-  // Which sidebar item is highlighted. 'dashboard' and 'all' both show every
-  // lead; 'all' additionally jumps to the table.
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  // 'dashboard' scrolls to the top; 'all' jumps to the table. Both clear filters.
   const [activeView, setActiveView] = useState('dashboard');
+  const hasFilters = Object.values(filters).some((value) => value !== 'all');
 
-  const applyFilter = (filter: string) => {
-    setActiveFilter(filter);
-    setActiveView(filter === 'all' ? 'dashboard' : filter);
+  const scrollToTable = () =>
+    document.getElementById('opportunities')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const setFilter = (key: keyof Filters, value: string) => setFilters((current) => ({ ...current, [key]: value }));
+
+  // Sidebar shortcuts toggle one filter and jump to the table.
+  const toggleFilter = (key: keyof Filters, value: string) => {
+    setFilters((current) => ({ ...current, [key]: current[key] === value ? 'all' : value }));
+    scrollToTable();
   };
 
-  const selectView = (view: string) => {
+  const selectView = (view: 'dashboard' | 'all') => {
     setActiveView(view);
-    setActiveFilter(view === 'dashboard' || view === 'all' ? 'all' : view);
-    if (view === 'dashboard' || view === 'all') setActiveIndustry('all');
-
+    setFilters(NO_FILTERS);
     if (view === 'dashboard') {
       document.getElementById('dashboard-main')?.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
-      document.getElementById('opportunities')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      scrollToTable();
     }
   };
 
@@ -107,29 +146,16 @@ export default function DashboardPage() {
   // Calculate metrics
   const totalLeads = leads.length;
   const highIntentLeads = leads.filter((l: any) => l.leadScore >= 80).length;
-  const tenders = leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('tender') || l.intentSignal?.toLowerCase().includes('rfp')).length;
-  const hiringCompanies = leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('hiring') || l.intentSignal?.toLowerCase().includes('roles')).length;
+  const tenders = leads.filter((l: any) => signalType(l) === 'Tender / RFP').length;
+  const hiringCompanies = leads.filter((l: any) => signalType(l) === 'Hiring').length;
 
-  // Filter leads
-  const getFilteredLeads = () => {
-    const byIndustry =
-      activeIndustry === 'all' ? leads : leads.filter((l: any) => (l.industry || 'Other') === activeIndustry);
-    return filterBySignal(byIndustry);
-  };
-
-  const filterBySignal = (leads: any[]) => {
-    if (activeFilter === 'all') return leads;
-    if (activeFilter === 'LinkedIn') return leads.filter((l: any) => isLinkedInLead(l));
-    if (activeFilter === 'Hiring') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('hiring') || l.intentSignal?.toLowerCase().includes('roles'));
-    if (activeFilter === 'Funding') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('funding'));
-    if (activeFilter === 'Tender') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('tender') || l.intentSignal?.toLowerCase().includes('rfp'));
-    if (activeFilter === 'AI') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('ai'));
-    if (LOBS.includes(activeFilter)) return leads.filter((l: any) => l.lob === activeFilter);
-    return leads;
-  };
-
-  const filteredLeads = getFilteredLeads();
+  const filteredLeads = leads.filter((lead: any) => matchesFilters(lead, filters));
   const industryCount = (industry: string) => leads.filter((l: any) => (l.industry || 'Other') === industry).length;
+
+  // Option counts respect the other active filters, e.g. Industry counts
+  // within the selected Source and Service.
+  const countWith = (key: keyof Filters, value: string) =>
+    leads.filter((lead: any) => matchesFilters(lead, { ...filters, [key]: value })).length;
 
   const getScoreClass = (score: number) => {
     if (score >= 80) return 'bg-emerald-100 text-emerald-800';
@@ -159,34 +185,34 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={() => selectView('dashboard')}
-            className={navItemClass(activeView === 'dashboard')}
+            className={navItemClass(activeView === 'dashboard' && !hasFilters)}
           >
             <span className="flex items-center gap-2"><span>📊</span> Dashboard</span>
           </button>
           <button
             type="button"
             onClick={() => selectView('all')}
-            className={navItemClass(activeView === 'all')}
+            className={navItemClass(activeView === 'all' && !hasFilters)}
           >
             <span className="flex items-center gap-2"><span>📋</span> All Leads</span>
             <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{totalLeads}</span>
           </button>
           <button
             type="button"
-            onClick={() => selectView('Tender')}
-            className={navItemClass(activeView === 'Tender')}
+            onClick={() => toggleFilter('signal', 'Tender / RFP')}
+            className={navItemClass(filters.signal === 'Tender / RFP')}
           >
             <span className="flex items-center gap-2"><span>📄</span> Tenders</span>
             <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{tenders}</span>
           </button>
 
-          <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2 mt-4">LOB</div>
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2 mt-4">Services</div>
           {LOB_OPTIONS.map(({ value: lob, label, icon }) => (
             <button
               type="button"
               key={lob}
-              onClick={() => selectView(lob)}
-              className={navItemClass(activeView === lob)}
+              onClick={() => toggleFilter('service', lob)}
+              className={navItemClass(filters.service === lob)}
             >
               <span className="flex items-center gap-2"><span>{icon}</span> {label}</span>
               <span className="text-[10px] text-gray-400">
@@ -200,8 +226,8 @@ export default function DashboardPage() {
             <button
               type="button"
               key={value}
-              onClick={() => setActiveIndustry(activeIndustry === value ? 'all' : value)}
-              className={navItemClass(activeIndustry === value)}
+              onClick={() => toggleFilter('industry', value)}
+              className={navItemClass(filters.industry === value)}
             >
               <span className="flex items-center gap-2"><span>{icon}</span> {label}</span>
               <span className="text-[10px] text-gray-400">{industryCount(value)}</span>
@@ -301,47 +327,47 @@ export default function DashboardPage() {
           </div>
 
           {/* Filters */}
-          <div className="flex gap-2 mb-4 flex-wrap items-center">
-            <span className="text-xs text-gray-600">Filter:</span>
-            {FILTER_CHIPS.map(({ value: filter, label }) => (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-4 bg-white border border-gray-200 rounded-lg px-4 py-3">
+            <FilterSelect
+              label="Source"
+              value={filters.source}
+              onChange={(value) => setFilter('source', value)}
+              options={SOURCE_TYPES.map((type) => ({ value: type, label: type, count: countWith('source', type) }))}
+            />
+            <FilterSelect
+              label="Signal type"
+              value={filters.signal}
+              onChange={(value) => setFilter('signal', value)}
+              options={SIGNAL_TYPES.map(({ value, label }) => ({ value, label, count: countWith('signal', value) }))}
+            />
+            <FilterSelect
+              label="Service"
+              value={filters.service}
+              onChange={(value) => setFilter('service', value)}
+              options={LOB_OPTIONS.map(({ value, label }) => ({ value, label, count: countWith('service', value) }))}
+            />
+            <FilterSelect
+              label="Industry"
+              value={filters.industry}
+              onChange={(value) => setFilter('industry', value)}
+              options={INDUSTRY_OPTIONS.map(({ value, label, priority }) => ({
+                value,
+                label: priority ? `${label} ★` : label,
+                count: countWith('industry', value),
+              }))}
+            />
+            {hasFilters && (
               <button
-                key={filter}
-                onClick={() => applyFilter(filter)}
-                className={`px-3 py-1 text-xs rounded-full border transition-all ${
-                  activeFilter === filter
-                    ? 'bg-blue-100 text-blue-700 border-transparent'
-                    : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                }`}
+                type="button"
+                onClick={() => setFilters(NO_FILTERS)}
+                className="text-xs text-blue-600 hover:text-blue-800"
               >
-                {label}
+                Clear filters
               </button>
-            ))}
+            )}
             <span className="ml-auto text-xs text-gray-500">
               Showing {filteredLeads.length} of {totalLeads}
             </span>
-          </div>
-
-          <div className="flex gap-2 mb-4 flex-wrap items-center">
-            <span className="text-xs text-gray-600">Industry:</span>
-            {[{ value: 'all', label: 'All', icon: '', priority: false }, ...INDUSTRY_OPTIONS].map(({ value, label, icon, priority }) => {
-              const count = value === 'all' ? totalLeads : industryCount(value);
-              if (value !== 'all' && !priority && count === 0) return null;
-              return (
-                <button
-                  key={value}
-                  onClick={() => setActiveIndustry(value)}
-                  className={`px-3 py-1 text-xs rounded-full border transition-all ${
-                    activeIndustry === value
-                      ? 'bg-blue-100 text-blue-700 border-transparent'
-                      : priority
-                        ? 'bg-white text-gray-800 border-gray-400 hover:bg-gray-50 font-medium'
-                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                  }`}
-                >
-                  {icon ? `${icon} ` : ''}{label}{priority ? ' ★' : ''} <span className="text-gray-400">({count})</span>
-                </button>
-              );
-            })}
           </div>
 
           {/* Table */}

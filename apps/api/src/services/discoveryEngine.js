@@ -4,6 +4,8 @@ import prisma from '../lib/prisma';
 import nonBuyers from '../config/non-buyers.json';
 import industryConfig from '../config/industries.json';
 import { findPublishedDate } from '../lib/publishedDate';
+import { findCompanyProfile } from '../lib/companyProfile';
+import { classifyLinkedInPost } from '../lib/linkedinFilters';
 
 // OpenAI client for scoreWithOpenAI (not yet used by the scan). Created only
 // when a key is configured: constructing it without one throws, which would
@@ -251,14 +253,6 @@ function scoreLead(industry, min, max) {
 
 const LINKEDIN_MAX_AGE_DAYS = 180;
 
-// The post asks for a provider, e.g. "I'm seeking recommendations for NetSuite partners".
-const LINKEDIN_REQUEST =
-  /\b(seeking recommendations?|looking for recommendations?|any recommendations|does anyone have (any )?recommendations?|can anyone recommend|could anyone recommend|can you recommend|who (would|do) you recommend|looking for (a|an) [^.?!]{0,50}(partner|consultant|consultancy|vendor|agency|firm|company|provider|team)|need (a|an) [^.?!]{0,40}(partner|consultant|vendor|agency|firm))\b/i;
-
-// Recruiting or self-promotion rather than a request to buy.
-const LINKEDIN_NOT_A_REQUEST =
-  /\b(we('| a)re hiring|#hiring|join our team|apply now|job opening|open role|years of experience|we help|our (team|clients|services|consultants|experts)|contact us|dm me|book a (call|demo)|reach out to us|we('| a)re a|we offer|as a (leading|certified)|partner of the year|we are looking for a passionate)\b/i;
-
 // LinkedIn activity IDs embed the post time: the top bits are a millisecond timestamp.
 function linkedInPostDate(url) {
   const match = url.match(/activity-(\d{19})/);
@@ -501,8 +495,9 @@ async function saveLinkedInLead(search, result, seenCompanies) {
   const text = `${result.title || ''} ${result.content || ''}`;
 
   if (!url.includes('linkedin.com/posts/')) return false;
-  if (!LINKEDIN_REQUEST.test(text) || LINKEDIN_NOT_A_REQUEST.test(text)) {
-    console.log(`   ⏭️  Skipped LinkedIn post (not a request to buy): ${url}`);
+  const verdict = classifyLinkedInPost(url, text);
+  if (!verdict.ok) {
+    console.log(`   ⏭️  Skipped LinkedIn post (${verdict.reason}): ${url}`);
     return false;
   }
 
@@ -658,21 +653,25 @@ export async function discoverLeads() {
       // parallel with the rest of the scan; awaited after the loop.
       pendingSaves.push((async () => {
       try {
-        const published = await findPublishedDate(result.url, result.published_date);
+        const [published, profile] = await Promise.all([
+          findPublishedDate(result.url, result.published_date),
+          findCompanyProfile(companyName, { industry, sourceUrl: result.url }).catch(() => null),
+        ]);
+        const website = profile?.website || companyWebsite;
         await prisma.lead.create({
           data: {
             companyName,
             industry,
-            website: companyWebsite,
-            employees: null,
+            website,
+            employees: profile?.employees ?? null,
             revenue: null,
-            hq: 'USA',
+            hq: profile?.headquarters || null,
             lob,
             intentSignal,
             recommendedService: search.service || LOB_SERVICES[lob],
             leadScore: score,
             source: `${query} (Tavily)`,
-            outreachEmail: `contact@${companyWebsite.replace(/^https?:\/\//, '')}`,
+            outreachEmail: `contact@${website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '')}`,
             signals: {
               techStack: [],
               whyThisLead: [
@@ -686,6 +685,8 @@ export async function discoverLeads() {
               postedAt: published ? published.date : null,
               postedAtSource: published ? published.method : null,
               postedAtChecked: true,
+              company: profile,
+              companyChecked: true,
             },
           },
         });

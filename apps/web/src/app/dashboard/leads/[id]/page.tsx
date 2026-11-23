@@ -148,6 +148,18 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   const playbook = PLAYBOOK[lead.lob];
   const company: string = lead.companyName;
   const fromLinkedIn = isLinkedInLead(lead);
+  // Company profile looked up by the API (description, official website, LinkedIn page).
+  const profile: {
+    description?: string | null;
+    website?: string | null;
+    linkedinUrl?: string | null;
+    headquarters?: string | null;
+    linkedinIndustry?: string | null;
+    employees?: number | null;
+    founded?: string | null;
+  } | null = signals.company || null;
+  const companyLinkedIn = profile?.linkedinUrl || null;
+  const officialWebsite = profile?.website || null;
   const authorProfileUrl: string | undefined = signals.authorProfileUrl || undefined;
   const postedAt: string | undefined = signals.postedAt || undefined;
   const postedAtSource: string | undefined = signals.postedAtSource || undefined;
@@ -228,12 +240,17 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               </a>
             ) : (
               <a
-                href={`https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(company)}`}
+                href={companyLinkedIn || `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(company)}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={actionLink}
               >
-                💼 LinkedIn company
+                💼 {companyLinkedIn ? 'LinkedIn page' : 'Find on LinkedIn'}
+              </a>
+            )}
+            {!fromLinkedIn && officialWebsite && (
+              <a href={officialWebsite} target="_blank" rel="noopener noreferrer" className={actionLink}>
+                🌐 Website
               </a>
             )}
             <a
@@ -266,6 +283,79 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Main column */}
           <div className="lg:col-span-2 space-y-4">
+            {!fromLinkedIn && (
+              <section className="bg-white border border-gray-200 rounded-lg p-6">
+                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">About {company}</h2>
+                {profile ? (
+                  <>
+                    {profile.description ? (
+                      <p className="text-gray-800 leading-relaxed">{profile.description}</p>
+                    ) : (
+                      <p className="text-gray-500 text-sm">No description available.</p>
+                    )}
+                    <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 mt-4 text-sm">
+                      <div className="flex justify-between sm:justify-start gap-3">
+                        <dt className="text-gray-500 w-24 shrink-0">Website</dt>
+                        <dd>
+                          {officialWebsite ? (
+                            <a href={officialWebsite} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 break-all">
+                              {hostname(officialWebsite)} ↗
+                            </a>
+                          ) : (
+                            <span className="text-gray-400">Not found</span>
+                          )}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between sm:justify-start gap-3">
+                        <dt className="text-gray-500 w-24 shrink-0">LinkedIn</dt>
+                        <dd>
+                          {companyLinkedIn ? (
+                            <a href={companyLinkedIn} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 break-all">
+                              {companyLinkedIn.replace(/^https?:\/\/(www\.)?/, '')} ↗
+                            </a>
+                          ) : (
+                            <span className="text-gray-400">Not found</span>
+                          )}
+                        </dd>
+                      </div>
+                      {profile.headquarters && (
+                        <div className="flex justify-between sm:justify-start gap-3">
+                          <dt className="text-gray-500 w-24 shrink-0">Headquarters</dt>
+                          <dd className="text-gray-900">{profile.headquarters}</dd>
+                        </div>
+                      )}
+                      {profile.linkedinIndustry && (
+                        <div className="flex justify-between sm:justify-start gap-3">
+                          <dt className="text-gray-500 w-24 shrink-0">Sector</dt>
+                          <dd className="text-gray-900">{profile.linkedinIndustry}</dd>
+                        </div>
+                      )}
+                      {profile.founded && (
+                        <div className="flex justify-between sm:justify-start gap-3">
+                          <dt className="text-gray-500 w-24 shrink-0">Founded</dt>
+                          <dd className="text-gray-900">{profile.founded}</dd>
+                        </div>
+                      )}
+                      {profile.employees ? (
+                        <div className="flex justify-between sm:justify-start gap-3">
+                          <dt className="text-gray-500 w-24 shrink-0">Employees</dt>
+                          <dd className="text-gray-900">~{profile.employees.toLocaleString()} on LinkedIn</dd>
+                        </div>
+                      ) : null}
+                    </dl>
+                    <p className="text-xs text-gray-400 mt-3">From the company&apos;s public LinkedIn / web profile.</p>
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-500">
+                    {signals.companyChecked
+                      ? 'We couldn’t find a reliable public profile for this company.'
+                      : 'Company profile not looked up yet.'}{' '}
+                    Use the LinkedIn and web search buttons above.
+                  </p>
+                )}
+              </section>
+            )}
+
             <section className="bg-white border border-gray-200 rounded-lg p-6">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Where we found this</h2>
               <dl className="grid grid-cols-1 sm:grid-cols-[150px_1fr] gap-x-4 gap-y-3 text-sm">
@@ -423,50 +513,14 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               </section>
             )}
 
-            <section className="bg-white border border-gray-200 rounded-lg p-5">
-              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Company snapshot</h2>
-              <dl className="space-y-2 text-sm">
-                {fromLinkedIn && (
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-gray-500">Company</dt>
-                    <dd className="text-gray-900 text-right">Not identified yet</dd>
-                  </div>
-                )}
-                <div className="flex justify-between gap-4">
-                  <dt className="text-gray-500">Industry</dt>
-                  <dd className="text-gray-900 text-right">{lead.industry || 'Unknown'}</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-gray-500">Location</dt>
-                  <dd className="text-gray-900 text-right">{lead.hq || 'Unknown'}</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-gray-500">Employees</dt>
-                  <dd className="text-gray-900 text-right">{lead.employees ? lead.employees.toLocaleString() : 'Not enriched yet'}</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-gray-500">Revenue</dt>
-                  <dd className="text-gray-900 text-right">
-                    {lead.revenue ? `$${(lead.revenue / 1000000).toFixed(1)}M` : 'Not enriched yet'}
-                  </dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-gray-500">Website</dt>
-                  <dd className="text-right">
-                    {lead.website ? (
-                      <>
-                        <a href={lead.website} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 break-all">
-                          {hostname(lead.website)}
-                        </a>
-                        <div className="text-xs text-gray-400">Best guess, not verified</div>
-                      </>
-                    ) : (
-                      'Unknown'
-                    )}
-                  </dd>
-                </div>
-              </dl>
-            </section>
+            {fromLinkedIn && (
+              <section className="bg-white border border-gray-200 rounded-lg p-5">
+                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Company</h2>
+                <p className="text-sm text-gray-600">
+                  Not identified yet. Open the author&apos;s LinkedIn profile to see where they work.
+                </p>
+              </section>
+            )}
 
             <section className="bg-white border border-gray-200 rounded-lg p-5">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Discovery details</h2>
