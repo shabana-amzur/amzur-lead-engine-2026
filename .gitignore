@@ -39,3 +39,6 @@ coverage/
 # Database
 *.db
 *.db-journal
+
+# TypeScript incremental build cache
+*.tsbuildinfo
