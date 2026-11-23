@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import prisma from '../lib/prisma';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
@@ -15,7 +16,6 @@ router.post('/login', async (req: Request, res: Response) => {
     }
 
     // Query user from database
-    const { default: prisma } = await import('@amzur/db');
     const user = await prisma.user.findUnique({
       where: { email },
     });

@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import prisma from '../lib/prisma';
 import { AuthRequest, authenticateToken } from '../middleware/auth';
 
 const router = Router();
@@ -6,7 +7,6 @@ const router = Router();
 // Get all leads with pagination and filters (protected route)
 router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { default: prisma } = await import('@amzur/db');
     
     // Parse query parameters
     const page = parseInt(req.query.page as string) || 1;
@@ -71,7 +71,6 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 // Get single lead (protected route)
 router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { default: prisma } = await import('@amzur/db');
     const { id } = req.params;
     
     const lead = await prisma.lead.findUnique({ 
@@ -92,7 +91,6 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
 // Create lead (protected route)
 router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { default: prisma } = await import('@amzur/db');
     const { companyName, industry, website, employees, revenue, hq, lob, outreachEmail } = req.body;
 
     if (!companyName) {
@@ -124,7 +122,6 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 // Update lead (protected route)
 router.put('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { default: prisma } = await import('@amzur/db');
     const { id } = req.params;
     const updateData = req.body;
 
@@ -143,7 +140,6 @@ router.put('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
 // Delete lead (protected route)
 router.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { default: prisma } = await import('@amzur/db');
     const { id } = req.params;
 
     await prisma.lead.delete({ where: { id } });

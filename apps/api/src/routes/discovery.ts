@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import prisma from '../lib/prisma';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { Response } from 'express';
 
@@ -34,7 +35,6 @@ router.post('/run', authenticateToken, async (req: AuthRequest, res: Response) =
 // Get discovery scan history (protected route)
 router.get('/history', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { default: prisma } = await import('@amzur/db');
     
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
@@ -65,7 +65,6 @@ router.get('/history', authenticateToken, async (req: AuthRequest, res: Response
 // Get latest scan details
 router.get('/latest', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { default: prisma } = await import('@amzur/db');
     
     const latestScan = await prisma.scanRun.findFirst({
       orderBy: { startedAt: 'desc' },
@@ -85,7 +84,6 @@ router.get('/latest', authenticateToken, async (req: AuthRequest, res: Response)
 // Get scan by ID
 router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { default: prisma } = await import('@amzur/db');
     const { id } = req.params;
     
     const scan = await prisma.scanRun.findUnique({

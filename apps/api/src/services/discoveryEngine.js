@@ -1,6 +1,6 @@
 import axios from 'axios';
 import OpenAI from 'openai';
-import prisma from '@amzur/db';
+import prisma from '../lib/prisma';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
