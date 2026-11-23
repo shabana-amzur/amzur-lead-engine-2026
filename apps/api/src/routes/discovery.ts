@@ -29,15 +29,18 @@ router.post('/run', authenticateToken, async (req: AuthRequest, res: Response) =
   }
 });
 
-// Dashboard refresh: scan for new leads on every refresh (the dashboard has
-// no login, so this route is public). Each scan costs Tavily credits; set
-// SCAN_COOLDOWN_MINUTES to skip scans when one ran recently. Default 0 = always scan.
-const REFRESH_COOLDOWN_MINUTES = parseInt(process.env.SCAN_COOLDOWN_MINUTES || '0', 10);
+// Dashboard refresh. Opening the dashboard scans only if the last scan was
+// at least SCAN_COOLDOWN_MINUTES ago (default 60); clicking "Refresh Results"
+// sends { force: true } and always scans. Each scan costs search credits, so
+// automatic page loads must not trigger one every time. Public route (the
+// dashboard has no login).
+const REFRESH_COOLDOWN_MINUTES = parseInt(process.env.SCAN_COOLDOWN_MINUTES || '60', 10);
 // A scan that started this recently and hasn't completed is assumed to still be running.
 const IN_PROGRESS_WINDOW_MINUTES = 5;
 
 router.post('/refresh', async (req, res: Response) => {
   try {
+    const force = req.body?.force === true;
     const latest = await prisma.scanRun.findFirst({ orderBy: { startedAt: 'desc' } });
 
     if (latest) {
@@ -47,7 +50,7 @@ router.post('/refresh', async (req, res: Response) => {
         return res.json({ status: 'in_progress', newLeadsFound: 0 });
       }
 
-      if (REFRESH_COOLDOWN_MINUTES > 0 && latest.completedAt && minutesSinceStart < REFRESH_COOLDOWN_MINUTES) {
+      if (!force && REFRESH_COOLDOWN_MINUTES > 0 && latest.completedAt && minutesSinceStart < REFRESH_COOLDOWN_MINUTES) {
         const nextScanAt = new Date(
           new Date(latest.startedAt).getTime() + REFRESH_COOLDOWN_MINUTES * 60000
         );

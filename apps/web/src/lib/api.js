@@ -115,10 +115,12 @@ export const scanAPI = {
     });
   },
 
-  // Scan for new leads unless one ran recently (the API enforces a cooldown).
-  refresh: async () => {
+  // Check for new leads. Without `force` the API skips the scan if one ran in
+  // the last 60 minutes; `force: true` (the Refresh Results button) always scans.
+  refresh: async ({ force = false } = {}) => {
     return fetchAPI('/api/scan/refresh', {
       method: 'POST',
+      body: JSON.stringify({ force }),
     });
   },
 

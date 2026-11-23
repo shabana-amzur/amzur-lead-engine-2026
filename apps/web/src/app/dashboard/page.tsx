@@ -100,20 +100,21 @@ export default function DashboardPage() {
   // Fetch scan history
   const { data: historyData, mutate: refreshHistory } = useSWR('/api/scan/history', () => scanAPI.getHistory({ limit: 5 }));
 
-  // Check for new leads on every page load and on "Refresh Results".
-  // Existing leads show immediately; new ones are added when the scan finishes.
+  // Page load: scan only if the last scan was over an hour ago (API decides).
+  // "Refresh Results": always scan. Existing leads show immediately; new ones
+  // are added when the scan finishes.
   const [checking, setChecking] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState('');
   const checkingRef = useRef(false);
 
-  const checkForNewLeads = useCallback(async () => {
+  const checkForNewLeads = useCallback(async (force = false) => {
     if (checkingRef.current) return;
     checkingRef.current = true;
     setChecking(true);
-    setRefreshMessage('Checking for new leads…');
+    setRefreshMessage(force ? 'Checking for new leads…' : 'Loading leads…');
 
     try {
-      const result = await scanAPI.refresh();
+      const result = await scanAPI.refresh({ force });
 
       if (result.status === 'completed') {
         const count = result.newLeadsFound || 0;
@@ -124,8 +125,8 @@ export default function DashboardPage() {
             : found
         );
       } else if (result.status === 'skipped') {
-        const next = new Date(result.nextScanAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        setRefreshMessage(`Up to date. Checked recently; next check available after ${next}.`);
+        const last = new Date(result.lastScanAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setRefreshMessage(`Last checked at ${last}. Click Refresh Results to check for new leads now.`);
       } else if (result.status === 'search_unavailable') {
         setRefreshMessage(
           result.error?.status === 432
@@ -287,7 +288,7 @@ export default function DashboardPage() {
             </div>
             <div className="flex flex-col items-end gap-1">
               <button
-                onClick={checkForNewLeads}
+                onClick={() => checkForNewLeads(true)}
                 disabled={checking}
                 className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md bg-white hover:bg-gray-50 disabled:opacity-60 disabled:cursor-wait flex items-center gap-2"
               >
