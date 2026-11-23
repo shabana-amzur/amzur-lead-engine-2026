@@ -313,6 +313,19 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">What they need</h2>
                 <div className="flex items-center gap-2 text-xs">
                   <span className="px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 font-medium">{requirementLabel}</span>
+                  {signals.jobOpen === true && (
+                    <span
+                      className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-medium"
+                      title={signals.jobCheckedAt ? `Checked ${new Date(signals.jobCheckedAt).toLocaleString()}` : undefined}
+                    >
+                      ✓ Posting still open
+                    </span>
+                  )}
+                  {signals.jobOpen === false && (
+                    <span className="px-2 py-0.5 rounded-md bg-red-50 text-red-700 font-medium">
+                      Posting closed{signals.jobClosedAt ? ` (${formatDate(signals.jobClosedAt)})` : ''}
+                    </span>
+                  )}
                   {postedAt && (
                     <span className={postedDaysAgo !== null && postedDaysAgo > 365 ? 'text-amber-700 font-medium' : 'text-gray-500'}>
                       Posted {formatDate(postedAt)} · {timeAgo(postedAt)}

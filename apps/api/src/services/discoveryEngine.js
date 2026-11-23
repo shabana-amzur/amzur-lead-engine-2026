@@ -11,6 +11,7 @@ import { searchWeb } from '../lib/searchProviders';
 import { searchNews } from '../lib/freeSources';
 import { LEAD_MAX_AGE_DAYS, isRecent } from '../config/recency';
 import { classifyGeography, leadGeography } from '../lib/geography';
+import { isJobOpen, jobApiUrl } from '../lib/jobStatus';
 
 // OpenAI client for scoreWithOpenAI (not yet used by the scan). Created only
 // when a key is configured: constructing it without one throws, which would
@@ -20,6 +21,23 @@ const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPE
 // Searches targeting actual buying intent, tagged with the line of business
 // (LOB) and Amzur service each one feeds. Every LOB on the dashboard needs at
 // least one search here, or it can never receive leads.
+function regionalNewsSearches(region, edition, queries) {
+  return queries.map((query) => ({
+    kind: 'news',
+    edition,
+    requireRegion: region,
+    allowUnknownRegion: true,
+    requireTechHeadline: true,
+    query,
+    lob: 'auto',
+    intent: `Technology decision in ${region === 'Europe' ? 'Europe' : region === 'UAE' ? 'the UAE' : 'India'} (news)`,
+  }));
+}
+
+// Technology terms a regional news headline must contain to count.
+const TECH_HEADLINE =
+  /\b(erp|sap|s\/4hana|oracle|netsuite|dynamics|workday|salesforce|crm|cloud|aws|azure|google cloud|data (platform|centre|center)|digital transformation|digitali[sz]ation|automation|ai|agentic|artificial intelligence|software|platform|core banking|modernis|moderniz|it services|analytics|capability cent(re|er))\b/i;
+
 const SEARCHES = [
   // Cloud
   {
@@ -224,31 +242,46 @@ const SEARCHES = [
     lob: 'Offshore',
     intent: 'Opening an India technology center (news)',
   },
-  // Regional news (free): Google News editions + place names. Results must be in that region.
+  // Regional job posts (paid web search): roles that signal Amzur services in
+  // European and UAE cities. The job's own location must be in that region.
   {
-    kind: 'news',
-    edition: 'IN',
-    requireRegion: 'India',
-    query: '(selects OR chooses OR implements OR "goes live" OR migrates) (NetSuite OR SAP OR ERP OR Oracle OR cloud OR AWS OR Azure OR automation OR "digital transformation") (India OR Bengaluru OR Mumbai OR Hyderabad OR Pune OR Chennai OR Delhi)',
+    query: 'site:greenhouse.io OR site:lever.co (London OR Dublin OR Berlin OR Amsterdam) Cloud OR DevOps OR NetSuite OR SAP engineer',
     lob: 'auto',
-    intent: 'Technology decision in India (news)',
-  },
-  {
-    kind: 'news',
-    edition: 'AE',
-    requireRegion: 'UAE',
-    query: '(selects OR chooses OR implements OR "goes live" OR migrates) (NetSuite OR SAP OR ERP OR Oracle OR cloud OR AWS OR Azure OR automation OR "digital transformation") (UAE OR Dubai OR "Abu Dhabi" OR Sharjah)',
-    lob: 'auto',
-    intent: 'Technology decision in the UAE (news)',
-  },
-  {
-    kind: 'news',
-    edition: 'GB',
     requireRegion: 'Europe',
-    query: '(selects OR chooses OR implements OR "goes live" OR migrates) (NetSuite OR SAP OR ERP OR Oracle OR cloud OR AWS OR Azure OR automation OR "digital transformation") (UK OR London OR Germany OR France OR Netherlands OR Ireland OR Spain OR Europe)',
-    lob: 'auto',
-    intent: 'Technology decision in Europe (news)',
+    allowUnknownRegion: true,
+    requireTechRole: true,
+    intent: 'Hiring for technology in Europe',
   },
+  {
+    query: 'site:greenhouse.io OR site:lever.co (London OR Dublin OR Berlin OR Amsterdam) software OR automation OR data engineer',
+    lob: 'auto',
+    requireRegion: 'Europe',
+    allowUnknownRegion: true,
+    requireTechRole: true,
+    intent: 'Hiring for technology in Europe',
+  },
+  {
+    query: 'site:greenhouse.io OR site:lever.co (Dubai OR "Abu Dhabi" OR UAE) "NetSuite" OR "SAP" OR "Cloud Engineer" OR "DevOps Engineer" OR "ERP"',
+    lob: 'auto',
+    requireRegion: 'UAE',
+    allowUnknownRegion: true,
+    requireTechRole: true,
+    intent: 'Hiring for technology in the UAE',
+  },
+  {
+    query: 'site:greenhouse.io OR site:lever.co (Dubai OR "Abu Dhabi" OR UAE) "Software Engineer" OR "Automation Engineer" OR "Data Engineer"',
+    lob: 'auto',
+    requireRegion: 'UAE',
+    allowUnknownRegion: true,
+    requireTechRole: true,
+    intent: 'Hiring for technology in the UAE',
+  },
+  // Regional news (free). Short "place + technology" queries: long OR-queries make
+  // Google News ignore the date limit. Kept only if the headline has a buyer verb
+  // and a technology term, and doesn't clearly name another region.
+  ...regionalNewsSearches('UAE', 'AE', ['UAE ERP', 'UAE SAP', 'UAE Oracle', 'UAE cloud', 'Dubai digital transformation', 'Abu Dhabi digital transformation', 'UAE AI platform', 'UAE core banking']),
+  ...regionalNewsSearches('Europe', 'GB', ['UK ERP', 'UK SAP', 'UK cloud migration', 'UK digital transformation', 'Germany SAP', 'Netherlands cloud', 'Ireland digital transformation', 'Europe ERP']),
+  ...regionalNewsSearches('India', 'IN', ['India ERP', 'India SAP', 'India cloud migration', 'India digital transformation', 'Bengaluru global capability centre', 'Hyderabad global capability centre']),
 ];
 
 // Amzur service recommended for each line of business.
@@ -558,7 +591,7 @@ Return ONLY valid JSON with this exact structure:
 // "Rush University System for Health selects AGFA..." -> "Rush University System for Health".
 // Verbs where the headline company is the buyer. "Expands"/"launches" usually
 // mean a vendor talking about itself, so they're only used where a search asks.
-const BUYER_VERBS = 'selects|select|chooses|choose|picks|taps|implements|implement|deploys|adopts|goes live|went live|migrates|moves|completes|signs|awards|partners with';
+const BUYER_VERBS = 'selects|select|chooses|choose|picks|taps|implements|implement|deploys|adopts|goes live|went live|migrates|moves|completes|awards';
 
 function companyFromHeadline(title, extraVerbs) {
   const verbs = extraVerbs ? `${BUYER_VERBS}|${extraVerbs}` : BUYER_VERBS;
@@ -566,6 +599,7 @@ function companyFromHeadline(title, extraVerbs) {
   if (!match) return null;
   let name = match[1]
     .replace(/^.*?:\s+/, '') // "'Absurd ambition': Pulumi" -> "Pulumi"
+    .replace(/^(UK|US|U\.S\.|UAE|India|Indian|Dutch|German|French|Irish|British|European)['’]s\s+/i, '') // "UK's AlRayan Bank" -> "AlRayan Bank"
     .replace(/^[A-Z][A-Za-z.\s-]{1,30}-based\s+/, '') // "New Jersey-based X" -> "X"
     .replace(/^.*\bparent company\s+/i, '') // "Royal Canin Parent Company Mars" -> "Mars"
     .replace(/\s+and\s+.*$/i, '') // "X and Y Select" -> "X"
@@ -769,6 +803,46 @@ export async function enrichExistingLeads(limit = 15) {
 }
 
 /**
+ * Re-check whether job-posting leads are still open (Greenhouse/Lever return
+ * 404 once closed). Checks leads inside the recency window that weren't
+ * checked in the last 12 hours, up to `limit` per scan. Free.
+ */
+export async function recheckJobPostings(limit = 25) {
+  const leads = await prisma.lead.findMany({ select: { id: true, companyName: true, signals: true } });
+  const due = leads
+    .filter((lead) => {
+      const signals = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
+      if (!jobApiUrl(signals.tavilyUrl) || signals.jobOpen === false) return false;
+      if (!isRecent(signals.postedAt)) return false;
+      const last = signals.jobCheckedAt ? new Date(signals.jobCheckedAt).getTime() : 0;
+      return Date.now() - last > 12 * 3600000;
+    })
+    .slice(0, limit);
+
+  let closed = 0;
+  await Promise.all(
+    due.map(async (lead) => {
+      const open = await isJobOpen(lead.signals.tavilyUrl);
+      if (open === null) return; // couldn't tell: try again next scan
+      if (!open) closed++;
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data: {
+          signals: {
+            ...lead.signals,
+            jobOpen: open,
+            jobCheckedAt: new Date().toISOString(),
+            ...(open ? {} : { jobClosedAt: new Date().toISOString() }),
+          },
+        },
+      });
+    })
+  );
+  if (due.length) console.log(`📋 Re-checked ${due.length} job postings: ${closed} closed`);
+  return { checked: due.length, closed };
+}
+
+/**
  * Main lead discovery engine
  */
 export async function discoverLeads() {
@@ -837,6 +911,12 @@ export async function discoverLeads() {
         continue;
       }
 
+      // Regional job searches: only technical roles (not sales, finance, admin).
+      if (search.requireTechRole && !ROLE_PATTERN.test(result.title || '')) {
+        console.log(`   ⏭️  Skipped: ${result.title} (not a technical role)`);
+        continue;
+      }
+
       // Hiring posts: name the role; otherwise use the search's signal.
       let intentSignal = search.intent;
       if (isJobBoard(domain)) {
@@ -874,9 +954,18 @@ export async function discoverLeads() {
             ? { date: result.published_date, method: `News feed (${result.publisher || 'Google News'})` }
             : null
           : await findPublishedDate(result.url, result.published_date);
-        // Region-targeted searches: the headline must clearly be in that region.
-        if (search.requireRegion && classifyGeography({ text: `${result.title || ''} ${result.content || ''}` }).region !== search.requireRegion) {
-          console.log(`   ⏭️  Skipped: ${companyName} (not clearly in ${search.requireRegion})`);
+        // Region-targeted searches: must be in that region (or, for regional news
+        // editions, at least not clearly somewhere else).
+        if (search.requireRegion) {
+          const textRegion = classifyGeography({ text: `${result.title || ''} ${result.content || ''}` }).region;
+          const okRegion = textRegion === search.requireRegion || (search.allowUnknownRegion && textRegion === 'Unknown');
+          if (!okRegion) {
+            console.log(`   ⏭️  Skipped: ${companyName} (${textRegion}, not ${search.requireRegion})`);
+            return;
+          }
+        }
+        if (search.requireTechHeadline && !TECH_HEADLINE.test(result.title || '')) {
+          console.log(`   ⏭️  Skipped: ${companyName} (headline isn't about technology)`);
           return;
         }
         // Only recent needs: skip sources older than the window or without a date,
@@ -892,6 +981,11 @@ export async function discoverLeads() {
         const website = profile?.website || companyWebsite;
         const geo = leadGeography({ requirement, profile, text: `${result.title || ''} ${result.content || ''}` });
         if (search.requireRegion && geo.region === 'Unknown') geo.region = search.requireRegion;
+        // Regional searches: the job location / HQ must confirm the region.
+        if (search.requireRegion && geo.region !== search.requireRegion) {
+          console.log(`   ⏭️  Skipped: ${companyName} (${geo.location || geo.region}, not ${search.requireRegion})`);
+          return;
+        }
         // Only target regions (USA, UAE, Europe, India); unknown locations are kept.
         if (geo.region === 'Other') {
           console.log(`   ⏭️  Skipped: ${companyName} (outside target regions: ${geo.location || 'location in text'})`);
@@ -931,6 +1025,8 @@ export async function discoverLeads() {
               requirementChecked: requirement !== undefined,
               geography: geo.region,
               location: geo.location,
+              // Just found on the job board, so the posting is open now.
+              ...(jobApiUrl(result.url) ? { jobOpen: true, jobCheckedAt: new Date().toISOString() } : {}),
             },
           },
         });
@@ -945,6 +1041,11 @@ export async function discoverLeads() {
   }
 
   await Promise.all(pendingSaves);
+
+  const jobStatus = await recheckJobPostings(25).catch((error) => {
+    console.error('Re-checking job postings failed:', error.message);
+    return { checked: 0, closed: 0 };
+  });
 
   // Let older leads catch up on company profiles and posted dates.
   const enrichedExisting = await enrichExistingLeads(15).catch((error) => {
@@ -967,6 +1068,8 @@ export async function discoverLeads() {
     companiesScanned: totalCompaniesScanned,
     newLeadsFound,
     enrichedExisting,
+    jobsRechecked: jobStatus.checked,
+    jobsClosed: jobStatus.closed,
     // Every search failed: the search provider is unavailable (e.g. usage limit).
     searchUnavailable: Object.values(sourcesBreakdown).every((count) => count === 0) && lastSearchError ? lastSearchError : null,
     // Paid web search failed but free sources still ran: report it without

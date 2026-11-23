@@ -390,6 +390,7 @@ export default function DashboardPage() {
                   Posted in the last {leadsData.recentDays} days
                   {leadsData.hiddenOlder ? ` · ${leadsData.hiddenOlder} older leads hidden` : ''}
                   {leadsData.hiddenOtherRegions ? ` · ${leadsData.hiddenOtherRegions} outside USA/UAE/Europe/India hidden` : ''}
+                  {leadsData.hiddenClosed ? ` · ${leadsData.hiddenClosed} closed job postings hidden` : ''}
                 </span>
               ) : null}
             </span>
@@ -470,7 +471,10 @@ export default function DashboardPage() {
                             const source = describeSource(lead.signals?.tavilyUrl);
                             return (
                               <>
-                                <div className="text-gray-700">{source.type}</div>
+                                <div className="text-gray-700">
+                                  {source.type}
+                                  {lead.signals?.jobOpen === true && <span className="ml-1 text-emerald-600" title="Posting still open">✓ open</span>}
+                                </div>
                                 <div className="text-[10px] text-gray-400">{source.where}</div>
                               </>
                             );

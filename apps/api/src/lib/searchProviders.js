@@ -11,6 +11,76 @@ const COOLDOWN_MS = 30 * 60 * 1000; // skip a failing provider for 30 minutes
 // provider name -> { until: timestamp, error } (per server instance)
 const disabled = new Map();
 
+// Serper sometimes returns Google redirect links (google.com/goto?url=...)
+// instead of the real page. Follow them to get the actual URL.
+async function resolveGoogleRedirect(url) {
+  if (!/^https?:\/\/(www\.)?google\.[a-z.]+\/(goto|url)\?/i.test(url || '')) return url;
+  try {
+    const response = await axios.get(url, {
+      maxRedirects: 0,
+      timeout: 8000,
+      responseType: 'text',
+      validateStatus: (status) => status >= 200 && status < 400,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LeadEngine/1.0)' },
+    });
+    if (response.headers && response.headers.location) return response.headers.location;
+    const html = String(response.data || '');
+    const target =
+      html.match(/http-equiv=["']refresh["'][^>]*url=([^"'>]+)/i) ||
+      html.match(/href=["'](https?:\/\/(?!(?:www\.)?google\.)[^"']+)["']/i);
+    return target ? target[1].replace(/&amp;/g, '&') : url;
+  } catch {
+    return url;
+  }
+}
+
+// When a Google redirect can't be followed (it uses JavaScript), find the job
+// on the company's public job board instead: Serper's display link names the
+// board (e.g. "job-boards.greenhouse.io › addepar1 › jobs"), and the board's job
+// list gives the real URL for the posting with the same title. Free.
+const boardCache = new Map(); // board url -> Promise<[{ title, url }]>
+
+const normalizeTitle = (title) =>
+  (title || '')
+    .toLowerCase()
+    .replace(/^job application for\s+/, '')
+    .replace(/\s+(at|@)\s+[^-|]+$/, '') // "... at Addepar"
+    .replace(/^[^-|]{2,40}\s+[-|]\s+/, (prefix) => (/(engineer|developer|manager|analyst|architect)/i.test(prefix) ? prefix : '')) // "1inch - Senior ..." -> "Senior ..."
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+function boardJobs(kind, board) {
+  const key = `${kind}:${board}`;
+  if (!boardCache.has(key)) {
+    const request =
+      kind === 'greenhouse'
+        ? axios
+            .get(`https://boards-api.greenhouse.io/v1/boards/${board}/jobs`, { timeout: 10000 })
+            // Standard Greenhouse link (not the company's own careers-page URL) so job
+            // details, posting date and open-status lookups recognise it.
+            .then(({ data }) => (data.jobs || []).map((job) => ({ title: job.title, url: `https://job-boards.greenhouse.io/${board}/jobs/${job.id}` })))
+        : axios
+            .get(`https://api.lever.co/v0/postings/${board}?mode=json`, { timeout: 10000 })
+            .then(({ data }) => (Array.isArray(data) ? data : []).map((job) => ({ title: job.text, url: job.hostedUrl })));
+    boardCache.set(key, request.catch(() => []));
+  }
+  return boardCache.get(key);
+}
+
+async function findOnJobBoard(displayedLink, title) {
+  const greenhouse = (displayedLink || '').match(/greenhouse\.io\s*›\s*([^\s›]+)/i);
+  const lever = (displayedLink || '').match(/lever\.co\s*›\s*([^\s›]+)/i);
+  if (!greenhouse && !lever) return null;
+  const jobs = await boardJobs(greenhouse ? 'greenhouse' : 'lever', (greenhouse || lever)[1]);
+  const wanted = normalizeTitle(title);
+  if (!wanted) return null;
+  const match =
+    jobs.find((job) => normalizeTitle(job.title) === wanted) ||
+    jobs.find((job) => wanted.includes(normalizeTitle(job.title)) && normalizeTitle(job.title).length > 8) ||
+    jobs.find((job) => normalizeTitle(job.title).includes(wanted) && wanted.length > 8);
+  return match ? match.url : null;
+}
+
 const PROVIDERS = [
   {
     name: 'tavily',
@@ -50,12 +120,20 @@ const PROVIDERS = [
         },
         { headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' }, timeout: TIMEOUT_MS }
       );
-      return (data.organic || []).map((r) => ({
+      const results = (data.organic || []).map((r) => ({
         title: r.title,
         url: r.link,
         content: r.snippet || '',
         published_date: r.date || null,
+        displayedLink: r.displayedLink || '',
       }));
+      return Promise.all(
+        results.map(async ({ displayedLink, ...r }) => {
+          let url = await resolveGoogleRedirect(r.url);
+          if (/google\.[a-z.]+\/(goto|url)\?/i.test(url)) url = (await findOnJobBoard(displayedLink, r.title)) || url;
+          return { ...r, url };
+        })
+      );
     },
   },
   {

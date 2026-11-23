@@ -55,7 +55,9 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     const recent = includeOlder
       ? matching
       : matching.filter((lead: any) => isRecent(lead.signals?.postedAt, recentDays));
-    const visible = includeOtherRegions ? recent : recent.filter((lead: any) => lead.signals?.geography !== 'Other');
+    const inRegion = includeOtherRegions ? recent : recent.filter((lead: any) => lead.signals?.geography !== 'Other');
+    // Job postings found to be closed are no longer worth contacting.
+    const visible = includeOlder ? inRegion : inRegion.filter((lead: any) => lead.signals?.jobOpen !== false);
     const total = visible.length;
     const leads = visible.slice((page - 1) * limit, page * limit);
 
@@ -63,7 +65,8 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       leads,
       recentDays: includeOlder ? null : recentDays,
       hiddenOlder: matching.length - recent.length,
-      hiddenOtherRegions: recent.length - visible.length,
+      hiddenOtherRegions: recent.length - inRegion.length,
+      hiddenClosed: inRegion.length - visible.length,
       pagination: {
         total,
         page,
