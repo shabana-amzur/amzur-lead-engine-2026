@@ -23,10 +23,19 @@ function decode(text) {
  * Google News RSS search. `days` limits to recent articles.
  * Returns [{ title, url, content, published_date, publisher, publisherUrl, provider: 'news' }]
  */
-async function searchNews(query, { days = 45, max = 15 } = {}) {
+// Google News editions (English) by country code.
+const EDITIONS = {
+  US: { hl: 'en-US', gl: 'US', ceid: 'US:en' },
+  IN: { hl: 'en-IN', gl: 'IN', ceid: 'IN:en' },
+  AE: { hl: 'en-AE', gl: 'AE', ceid: 'AE:en' },
+  GB: { hl: 'en-GB', gl: 'GB', ceid: 'GB:en' },
+  IE: { hl: 'en-IE', gl: 'IE', ceid: 'IE:en' },
+};
+
+async function searchNews(query, { days = 45, max = 15, edition = 'US' } = {}) {
   const q = `${query} when:${days}d`;
   const { data } = await axios.get('https://news.google.com/rss/search', {
-    params: { q, hl: 'en-US', gl: 'US', ceid: 'US:en' },
+    params: { q, ...(EDITIONS[edition] || EDITIONS.US) },
     headers: HEADERS,
     timeout: TIMEOUT_MS,
     responseType: 'text',

@@ -21,6 +21,8 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     // Only leads posted online within the recency window, unless includeOlder=true.
     const includeOlder = req.query.includeOlder === 'true';
     const recentDays = parseInt(req.query.recentDays as string) || LEAD_MAX_AGE_DAYS;
+    // Only target regions (USA, UAE, Europe, India) or unknown location, unless includeOtherRegions=true.
+    const includeOtherRegions = req.query.includeOtherRegions === 'true';
 
     // Build filter conditions
     const where: any = {};
@@ -50,16 +52,18 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     // The posting date lives in the signals JSON, so recency is filtered here
     // and pagination applied afterwards (lead volumes are small).
     const matching = await prisma.lead.findMany({ where, orderBy: { leadScore: 'desc' } });
-    const visible = includeOlder
+    const recent = includeOlder
       ? matching
       : matching.filter((lead: any) => isRecent(lead.signals?.postedAt, recentDays));
+    const visible = includeOtherRegions ? recent : recent.filter((lead: any) => lead.signals?.geography !== 'Other');
     const total = visible.length;
     const leads = visible.slice((page - 1) * limit, page * limit);
 
     res.json({
       leads,
       recentDays: includeOlder ? null : recentDays,
-      hiddenOlder: matching.length - visible.length,
+      hiddenOlder: matching.length - recent.length,
+      hiddenOtherRegions: recent.length - visible.length,
       pagination: {
         total,
         page,

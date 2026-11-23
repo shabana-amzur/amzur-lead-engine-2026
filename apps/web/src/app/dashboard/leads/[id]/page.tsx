@@ -6,6 +6,7 @@ import { leadsAPI } from '@/lib/api';
 import { lobBadge, lobLabel } from '@/lib/lobs';
 import { industryBadge, isPriorityIndustry } from '@/lib/industries';
 import { describeSource, hostname, isLinkedInLead } from '@/lib/sources';
+import { regionLabel } from '@/lib/regions';
 import { useRouter } from 'next/navigation';
 
 // Suggested approach and buyer roles per line of business. These are
@@ -226,6 +227,10 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 </span>
                 <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${industryBadge(lead.industry || 'Other')}`}>
                   {lead.industry || 'Other'}{isPriorityIndustry(lead.industry) ? ' ★ Priority' : ''}
+                </span>
+                <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700">
+                  {regionLabel(signals.geography || 'Unknown')}
+                  {signals.location ? ` · ${signals.location}` : ''}
                 </span>
                 <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700">
                   {source.type} · {source.where}

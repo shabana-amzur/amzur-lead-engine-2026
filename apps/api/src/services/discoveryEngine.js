@@ -10,6 +10,7 @@ import { findRequirementDetails } from '../lib/requirementDetails';
 import { searchWeb } from '../lib/searchProviders';
 import { searchNews } from '../lib/freeSources';
 import { LEAD_MAX_AGE_DAYS, isRecent } from '../config/recency';
+import { classifyGeography, leadGeography } from '../lib/geography';
 
 // OpenAI client for scoreWithOpenAI (not yet used by the scan). Created only
 // when a key is configured: constructing it without one throws, which would
@@ -222,6 +223,31 @@ const SEARCHES = [
     headlineVerbs: 'expands|opens|inaugurates|launches|sets up',
     lob: 'Offshore',
     intent: 'Opening an India technology center (news)',
+  },
+  // Regional news (free): Google News editions + place names. Results must be in that region.
+  {
+    kind: 'news',
+    edition: 'IN',
+    requireRegion: 'India',
+    query: '(selects OR chooses OR implements OR "goes live" OR migrates) (NetSuite OR SAP OR ERP OR Oracle OR cloud OR AWS OR Azure OR automation OR "digital transformation") (India OR Bengaluru OR Mumbai OR Hyderabad OR Pune OR Chennai OR Delhi)',
+    lob: 'auto',
+    intent: 'Technology decision in India (news)',
+  },
+  {
+    kind: 'news',
+    edition: 'AE',
+    requireRegion: 'UAE',
+    query: '(selects OR chooses OR implements OR "goes live" OR migrates) (NetSuite OR SAP OR ERP OR Oracle OR cloud OR AWS OR Azure OR automation OR "digital transformation") (UAE OR Dubai OR "Abu Dhabi" OR Sharjah)',
+    lob: 'auto',
+    intent: 'Technology decision in the UAE (news)',
+  },
+  {
+    kind: 'news',
+    edition: 'GB',
+    requireRegion: 'Europe',
+    query: '(selects OR chooses OR implements OR "goes live" OR migrates) (NetSuite OR SAP OR ERP OR Oracle OR cloud OR AWS OR Azure OR automation OR "digital transformation") (UK OR London OR Germany OR France OR Netherlands OR Ireland OR Spain OR Europe)',
+    lob: 'auto',
+    intent: 'Technology decision in Europe (news)',
   },
 ];
 
@@ -565,7 +591,7 @@ function feedRequirement(result) {
 
 async function fetchForSearch(search) {
   try {
-    if (search.kind === 'news') return await searchNews(search.query, { days: LEAD_MAX_AGE_DAYS });
+    if (search.kind === 'news') return await searchNews(search.query, { days: LEAD_MAX_AGE_DAYS, edition: search.edition });
   } catch (error) {
     console.error(`Free source error for "${search.query}":`, error.message);
     return [];
@@ -602,6 +628,11 @@ async function saveLinkedInLead(search, result, seenCompanies) {
 
   const lob = search.lob === 'auto' ? inferLob(text) : search.lob;
   const industry = classifyIndustry(text);
+  const geo = classifyGeography({ text });
+  if (geo.region === 'Other') {
+    console.log(`   ⏭️  Skipped LinkedIn post (outside target regions): ${url}`);
+    return false;
+  }
   const slug = linkedInSlug(url);
   // An explicit request for a provider is a strong signal: score higher.
   const score = scoreLead(industry, 80, 90);
@@ -636,6 +667,8 @@ async function saveLinkedInLead(search, result, seenCompanies) {
           sourceTitle: result.title || null,
           requirement: await findRequirementDetails(url, { companyName: author, title: result.title, text }).catch(() => null),
           requirementChecked: true,
+          geography: geo.region,
+          location: geo.location,
         },
       },
     });
@@ -665,6 +698,7 @@ export async function enrichExistingLeads(limit = 15) {
       requirement: !signals.requirementChecked,
       // Profiles cost a search credit: only for leads recent enough to be shown.
       profile: signals.leadType !== 'linkedin_post' && !signals.companyChecked && isRecent(signals.postedAt),
+      geography: !signals.geography,
     };
   };
   const pending = leads.filter((lead) => Object.values(needs(lead)).some(Boolean)).slice(0, limit);
@@ -711,7 +745,16 @@ export async function enrichExistingLeads(limit = 15) {
         else if (lead.hq === 'USA') data.hq = null; // old placeholder, not real data
         if (found?.employees) data.employees = found.employees;
       }
-      if (!date?.ok && !requirement?.ok && !profile?.ok) return;
+      if (!date?.ok && !requirement?.ok && !profile?.ok && !todo.geography) return;
+
+      const geo = leadGeography({
+        requirement: nextSignals.requirement,
+        profile: nextSignals.company,
+        hq: data.hq ?? lead.hq,
+        text: `${lead.companyName} ${nextSignals.sourceTitle || ''} ${nextSignals.searchContext || ''}`,
+      });
+      nextSignals.geography = geo.region;
+      nextSignals.location = geo.location;
 
       try {
         await prisma.lead.update({ where: { id: lead.id }, data: { ...data, signals: nextSignals } });
@@ -831,6 +874,11 @@ export async function discoverLeads() {
             ? { date: result.published_date, method: `News feed (${result.publisher || 'Google News'})` }
             : null
           : await findPublishedDate(result.url, result.published_date);
+        // Region-targeted searches: the headline must clearly be in that region.
+        if (search.requireRegion && classifyGeography({ text: `${result.title || ''} ${result.content || ''}` }).region !== search.requireRegion) {
+          console.log(`   ⏭️  Skipped: ${companyName} (not clearly in ${search.requireRegion})`);
+          return;
+        }
         // Only recent needs: skip sources older than the window or without a date,
         // before spending a search credit on the company profile.
         if (!published || !isRecent(published.date)) {
@@ -842,6 +890,13 @@ export async function discoverLeads() {
           fromFeed ? feedRequirement(result) : findRequirementDetails(result.url, { companyName, title: result.title, text: result.content }).catch(() => undefined),
         ]);
         const website = profile?.website || companyWebsite;
+        const geo = leadGeography({ requirement, profile, text: `${result.title || ''} ${result.content || ''}` });
+        if (search.requireRegion && geo.region === 'Unknown') geo.region = search.requireRegion;
+        // Only target regions (USA, UAE, Europe, India); unknown locations are kept.
+        if (geo.region === 'Other') {
+          console.log(`   ⏭️  Skipped: ${companyName} (outside target regions: ${geo.location || 'location in text'})`);
+          return;
+        }
         await prisma.lead.create({
           data: {
             companyName,
@@ -849,7 +904,7 @@ export async function discoverLeads() {
             website,
             employees: profile?.employees ?? null,
             revenue: null,
-            hq: profile?.headquarters || null,
+            hq: profile?.headquarters || geo.location || null,
             lob,
             intentSignal,
             recommendedService: search.service || LOB_SERVICES[lob],
@@ -874,6 +929,8 @@ export async function discoverLeads() {
               sourceTitle: result.title || null,
               requirement: requirement || null,
               requirementChecked: requirement !== undefined,
+              geography: geo.region,
+              location: geo.location,
             },
           },
         });

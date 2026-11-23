@@ -6,14 +6,16 @@ import { LOB_OPTIONS, lobBadge, lobLabel } from '@/lib/lobs';
 import { INDUSTRY_OPTIONS, PRIORITY_INDUSTRIES, industryBadge, isPriorityIndustry } from '@/lib/industries';
 import { describeSource, isLinkedInLead } from '@/lib/sources';
 import { SIGNAL_TYPES, SOURCE_TYPES, signalType, sourceType } from '@/lib/signals';
+import { REGION_OPTIONS, leadRegion, regionLabel } from '@/lib/regions';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-type Filters = { source: string; signal: string; service: string; industry: string };
-const NO_FILTERS: Filters = { source: 'all', signal: 'all', service: 'all', industry: 'all' };
+type Filters = { region: string; source: string; signal: string; service: string; industry: string };
+const NO_FILTERS: Filters = { region: 'all', source: 'all', signal: 'all', service: 'all', industry: 'all' };
 
 function matchesFilters(lead: any, filters: Filters) {
   return (
+    (filters.region === 'all' || leadRegion(lead) === filters.region) &&
     (filters.source === 'all' || sourceType(lead) === filters.source) &&
     (filters.signal === 'all' || signalType(lead) === filters.signal) &&
     (filters.service === 'all' || lead.lob === filters.service) &&
@@ -339,6 +341,12 @@ export default function DashboardPage() {
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-4 bg-white border border-gray-200 rounded-lg px-4 py-3">
             <FilterSelect
+              label="Region"
+              value={filters.region}
+              onChange={(value) => setFilter('region', value)}
+              options={REGION_OPTIONS.map(({ value }) => ({ value, label: regionLabel(value), count: countWith('region', value) }))}
+            />
+            <FilterSelect
               label="Source"
               value={filters.source}
               onChange={(value) => setFilter('source', value)}
@@ -381,6 +389,7 @@ export default function DashboardPage() {
                 <span className="block text-[10px] text-gray-400">
                   Posted in the last {leadsData.recentDays} days
                   {leadsData.hiddenOlder ? ` · ${leadsData.hiddenOlder} older leads hidden` : ''}
+                  {leadsData.hiddenOtherRegions ? ` · ${leadsData.hiddenOtherRegions} outside USA/UAE/Europe/India hidden` : ''}
                 </span>
               ) : null}
             </span>
@@ -429,6 +438,11 @@ export default function DashboardPage() {
                           {isLinkedInLead(lead) && (
                             <div className="text-[10px] text-blue-700 mt-0.5">in LinkedIn post · company unknown</div>
                           )}
+                          <div className="text-[10px] text-gray-400 mt-0.5">
+                            {leadRegion(lead) !== 'Unknown'
+                              ? `${regionLabel(leadRegion(lead))}${lead.signals?.location ? ` · ${lead.signals.location}` : ''}`
+                              : 'Location unknown'}
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-medium ${industryBadge(lead.industry || 'Other')}`}>
