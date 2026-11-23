@@ -123,6 +123,12 @@ export default function DashboardPage() {
       } else if (result.status === 'skipped') {
         const next = new Date(result.nextScanAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         setRefreshMessage(`Up to date. Checked recently; next check available after ${next}.`);
+      } else if (result.status === 'search_unavailable') {
+        setRefreshMessage(
+          result.error?.status === 432
+            ? 'Lead search is paused: the Tavily search account has reached its usage limit. Showing existing leads.'
+            : 'Lead search is unavailable right now. Showing existing leads.'
+        );
       } else if (result.status === 'in_progress') {
         setRefreshMessage('A scan is already running; results will appear shortly.');
       }

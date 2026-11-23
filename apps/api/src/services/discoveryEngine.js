@@ -346,7 +346,13 @@ function isJobBoard(domain) {
 /**
  * Search for companies using Tavily API
  */
-async function searchWithTavily(query, depth = 'advanced') {
+// Last search error from Tavily in this process (e.g. usage limit reached),
+// reported in the scan summary so the dashboard can explain an empty scan.
+let lastSearchError = null;
+
+// 'basic' depth costs 1 credit per search vs 2 for 'advanced'; snippets are
+// shorter but enough to identify the company and signal.
+async function searchWithTavily(query, depth = 'basic') {
   try {
     const response = await axios.post(
       'https://api.tavily.com/search',
@@ -364,6 +370,9 @@ async function searchWithTavily(query, depth = 'advanced') {
     return response.data.results || [];
   } catch (error) {
     console.error(`Tavily search error for "${query}":`, error.message);
+    const status = error.response?.status;
+    const detail = error.response?.data?.detail?.error || error.response?.data?.detail || error.message;
+    lastSearchError = { status, message: typeof detail === 'string' ? detail : error.message };
     return [];
   }
 }
@@ -557,6 +566,65 @@ async function saveLinkedInLead(search, result, seenCompanies) {
 }
 
 /**
+ * Fill in the company profile and posted date for up to `limit` existing
+ * leads that don't have them yet (saved before these lookups existed, or when
+ * a lookup failed). Runs at the end of every scan so older leads catch up a
+ * few at a time without depending on the deploy build. ~1 Tavily credit each.
+ */
+export async function enrichExistingLeads(limit = 10) {
+  const leads = await prisma.lead.findMany({
+    select: { id: true, companyName: true, industry: true, website: true, hq: true, employees: true, signals: true },
+    orderBy: { leadScore: 'desc' },
+  });
+  const pending = leads
+    .filter((lead) => {
+      const signals = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
+      if (!signals.postedAtChecked) return true;
+      return signals.leadType !== 'linkedin_post' && !signals.companyChecked;
+    })
+    .slice(0, limit);
+
+  let updated = 0;
+  await Promise.all(
+    pending.map(async (lead) => {
+      const signals = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
+      const needsProfile = signals.leadType !== 'linkedin_post' && !signals.companyChecked;
+      try {
+        const [published, profile] = await Promise.all([
+          signals.postedAtChecked ? null : findPublishedDate(signals.tavilyUrl),
+          needsProfile ? findCompanyProfile(lead.companyName, { industry: lead.industry, sourceUrl: signals.tavilyUrl }) : null,
+        ]);
+        const nextSignals = { ...signals };
+        if (!signals.postedAtChecked) {
+          nextSignals.postedAt = published ? published.date : null;
+          nextSignals.postedAtSource = published ? published.method : null;
+          nextSignals.postedAtChecked = true;
+        }
+        const data = { signals: nextSignals };
+        if (needsProfile) {
+          nextSignals.company = profile;
+          nextSignals.companyChecked = true;
+          if (profile?.website) {
+            data.website = profile.website;
+            data.outreachEmail = `contact@${profile.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '')}`;
+          }
+          if (profile?.headquarters) data.hq = profile.headquarters;
+          else if (lead.hq === 'USA') data.hq = null; // old placeholder, not real data
+          if (profile?.employees) data.employees = profile.employees;
+        }
+        await prisma.lead.update({ where: { id: lead.id }, data });
+        updated++;
+      } catch (error) {
+        // Lookup failed (network, rate limit): leave unchecked so a later scan retries.
+        console.error(`   ⚠️  Could not enrich ${lead.companyName}:`, error.message);
+      }
+    })
+  );
+  if (pending.length) console.log(`🧩 Enriched ${updated} of ${pending.length} older leads`);
+  return updated;
+}
+
+/**
  * Main lead discovery engine
  */
 export async function discoverLeads() {
@@ -583,6 +651,7 @@ export async function discoverLeads() {
   console.log(`📊 ${existingLeads.length} existing leads in database`);
 
   const pendingSaves = [];
+  lastSearchError = null;
 
   // Run all searches in parallel; Tavily latency dominates scan time.
   const searchResults = await Promise.all(
@@ -702,6 +771,12 @@ export async function discoverLeads() {
 
   await Promise.all(pendingSaves);
 
+  // Let older leads catch up on company profiles and posted dates.
+  const enrichedExisting = await enrichExistingLeads(10).catch((error) => {
+    console.error('Enriching older leads failed:', error.message);
+    return 0;
+  });
+
   await prisma.scanRun.update({
     where: { id: scanRun.id },
     data: {
@@ -716,6 +791,9 @@ export async function discoverLeads() {
     scanRunId: scanRun.id,
     companiesScanned: totalCompaniesScanned,
     newLeadsFound,
+    enrichedExisting,
+    // Every search failed: the search provider is unavailable (e.g. usage limit).
+    searchUnavailable: Object.values(sourcesBreakdown).every((count) => count === 0) && lastSearchError ? lastSearchError : null,
     sources: sourcesBreakdown,
     duration: new Date() - scanRun.startedAt,
   };

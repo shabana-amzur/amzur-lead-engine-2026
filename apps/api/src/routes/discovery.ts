@@ -63,6 +63,9 @@ router.post('/refresh', async (req, res: Response) => {
     console.log('🔄 Dashboard refresh triggered lead discovery');
     const { discoverLeads } = await import('../services/discoveryEngine.js');
     const summary = await discoverLeads();
+    if (summary.searchUnavailable) {
+      return res.json({ status: 'search_unavailable', newLeadsFound: 0, error: summary.searchUnavailable, summary });
+    }
     res.json({ status: 'completed', newLeadsFound: summary.newLeadsFound, summary });
   } catch (error) {
     console.error('Refresh discovery failed:', error);
