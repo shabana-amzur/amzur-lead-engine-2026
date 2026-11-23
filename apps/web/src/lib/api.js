@@ -115,6 +115,13 @@ export const scanAPI = {
     });
   },
 
+  // Scan for new leads unless one ran recently (the API enforces a cooldown).
+  refresh: async () => {
+    return fetchAPI('/api/scan/refresh', {
+      method: 'POST',
+    });
+  },
+
   getHistory: async (params = {}) => {
     const queryString = new URLSearchParams(params).toString();
     return fetchAPI(`/api/scan/history${queryString ? `?${queryString}` : ''}`);

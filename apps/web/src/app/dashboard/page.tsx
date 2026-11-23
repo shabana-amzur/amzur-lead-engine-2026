@@ -3,11 +3,44 @@
 import useSWR from 'swr';
 import { leadsAPI, scanAPI } from '@/lib/api';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+const LOBS = ['Cloud', 'ERP', 'Staffing', 'Solution', 'Offshore'];
+const LOB_ICONS: Record<string, string> = {
+  Cloud: '☁️',
+  ERP: '📊',
+  Staffing: '👥',
+  Solution: '💡',
+  Offshore: '🌍',
+};
 
 export default function DashboardPage() {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState('all');
+  // Which sidebar item is highlighted. 'dashboard' and 'all' both show every
+  // lead; 'all' additionally jumps to the table.
+  const [activeView, setActiveView] = useState('dashboard');
+
+  const applyFilter = (filter: string) => {
+    setActiveFilter(filter);
+    setActiveView(filter === 'all' ? 'dashboard' : filter);
+  };
+
+  const selectView = (view: string) => {
+    setActiveView(view);
+    setActiveFilter(view === 'dashboard' || view === 'all' ? 'all' : view);
+
+    if (view === 'dashboard') {
+      document.getElementById('dashboard-main')?.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      document.getElementById('opportunities')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const navItemClass = (active: boolean) =>
+    `w-full mb-1 px-2 py-2 rounded-md text-sm text-left cursor-pointer flex items-center gap-2 justify-between ${
+      active ? 'bg-blue-50 text-blue-700' : 'text-gray-700 hover:bg-gray-100'
+    }`;
 
   // Fetch all leads
   const { data: leadsData, error: leadsError, mutate: refreshLeads } = useSWR(
@@ -16,10 +49,51 @@ export default function DashboardPage() {
   );
 
   // Fetch latest scan
-  const { data: scanData } = useSWR('/api/scan/latest', () => scanAPI.getLatest());
+  const { data: scanData, mutate: refreshLatestScan } = useSWR('/api/scan/latest', () => scanAPI.getLatest());
 
   // Fetch scan history
-  const { data: historyData } = useSWR('/api/scan/history', () => scanAPI.getHistory({ limit: 5 }));
+  const { data: historyData, mutate: refreshHistory } = useSWR('/api/scan/history', () => scanAPI.getHistory({ limit: 5 }));
+
+  // Check for new leads on every page load and on "Refresh Results".
+  // Existing leads show immediately; new ones are added when the scan finishes.
+  const [checking, setChecking] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState('');
+  const checkingRef = useRef(false);
+
+  const checkForNewLeads = useCallback(async () => {
+    if (checkingRef.current) return;
+    checkingRef.current = true;
+    setChecking(true);
+    setRefreshMessage('Checking for new leads…');
+
+    try {
+      const result = await scanAPI.refresh();
+
+      if (result.status === 'completed') {
+        const count = result.newLeadsFound || 0;
+        setRefreshMessage(
+          count > 0 ? `${count} new lead${count === 1 ? '' : 's'} found.` : 'No new leads found.'
+        );
+      } else if (result.status === 'skipped') {
+        const next = new Date(result.nextScanAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setRefreshMessage(`Up to date. Checked recently; next check available after ${next}.`);
+      } else if (result.status === 'in_progress') {
+        setRefreshMessage('A scan is already running; results will appear shortly.');
+      }
+    } catch (error) {
+      setRefreshMessage('Could not check for new leads right now. Showing existing leads.');
+    } finally {
+      await Promise.all([refreshLeads(), refreshLatestScan(), refreshHistory()]);
+      checkingRef.current = false;
+      setChecking(false);
+    }
+  }, [refreshLeads, refreshLatestScan, refreshHistory]);
+
+  useEffect(() => {
+    checkForNewLeads();
+    // Run once per page load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const leads = leadsData?.leads || [];
   
@@ -37,7 +111,7 @@ export default function DashboardPage() {
     if (activeFilter === 'Tender') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('tender') || l.intentSignal?.toLowerCase().includes('rfp'));
     if (activeFilter === 'ERP') return leads.filter((l: any) => l.lob === 'ERP');
     if (activeFilter === 'AI') return leads.filter((l: any) => l.intentSignal?.toLowerCase().includes('ai'));
-    if (activeFilter === 'Cloud') return leads.filter((l: any) => l.lob === 'Cloud');
+    if (LOBS.includes(activeFilter)) return leads.filter((l: any) => l.lob === activeFilter);
     return leads;
   };
 
@@ -77,33 +151,52 @@ export default function DashboardPage() {
         
         <div className="p-3 flex-1 overflow-y-auto">
           <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2">Discover</div>
-          <div className="mb-1 px-2 py-2 rounded-md bg-blue-50 text-blue-700 text-sm cursor-pointer flex items-center gap-2">
-            <span>📊</span> Dashboard
-          </div>
-          <div className="mb-1 px-2 py-2 rounded-md hover:bg-gray-100 text-sm text-gray-700 cursor-pointer flex items-center gap-2 justify-between">
-            <div className="flex items-center gap-2"><span>📋</span> All Leads</div>
+          <button
+            type="button"
+            onClick={() => selectView('dashboard')}
+            className={navItemClass(activeView === 'dashboard')}
+          >
+            <span className="flex items-center gap-2"><span>📊</span> Dashboard</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => selectView('all')}
+            className={navItemClass(activeView === 'all')}
+          >
+            <span className="flex items-center gap-2"><span>📋</span> All Leads</span>
             <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{totalLeads}</span>
-          </div>
-          <div className="mb-1 px-2 py-2 rounded-md hover:bg-gray-100 text-sm text-gray-700 cursor-pointer flex items-center gap-2 justify-between">
-            <div className="flex items-center gap-2"><span>📄</span> Tenders</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => selectView('Tender')}
+            className={navItemClass(activeView === 'Tender')}
+          >
+            <span className="flex items-center gap-2"><span>📄</span> Tenders</span>
             <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{tenders}</span>
-          </div>
-          
+          </button>
+
           <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2 mt-4">LOB</div>
-          {['Cloud', 'ERP', 'Staffing', 'Solution', 'Offshore'].map(lob => (
-            <div 
+          {LOBS.map(lob => (
+            <button
+              type="button"
               key={lob}
-              onClick={() => setActiveFilter(lob)}
-              className="mb-1 px-2 py-2 rounded-md hover:bg-gray-100 text-sm text-gray-700 cursor-pointer flex items-center gap-2"
+              onClick={() => selectView(lob)}
+              className={navItemClass(activeView === lob)}
             >
-              <span>{lob === 'Cloud' ? '☁️' : lob === 'ERP' ? '📊' : lob === 'Staffing' ? '👥' : lob === 'Solution' ? '💡' : '🌍'}</span>
-              {lob}
-            </div>
+              <span className="flex items-center gap-2"><span>{LOB_ICONS[lob]}</span> {lob}</span>
+              <span className="text-[10px] text-gray-400">
+                {leads.filter((l: any) => l.lob === lob).length}
+              </span>
+            </button>
           ))}
-          
+
           <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2 mt-4">Settings</div>
-          <div className="mb-1 px-2 py-2 rounded-md hover:bg-gray-100 text-sm text-gray-700 cursor-pointer flex items-center gap-2">
-            <span>⚙️</span> Configuration
+          <div
+            title="Configuration is not available yet"
+            className="mb-1 px-2 py-2 rounded-md text-sm text-gray-400 cursor-not-allowed flex items-center gap-2 justify-between"
+          >
+            <span className="flex items-center gap-2"><span>⚙️</span> Configuration</span>
+            <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">Soon</span>
           </div>
         </div>
         
@@ -124,7 +217,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto">
+      <div id="dashboard-main" className="flex-1 overflow-y-auto">
         <div className="p-6">
           {/* Header */}
           <div className="flex justify-between items-start mb-5">
@@ -139,16 +232,18 @@ export default function DashboardPage() {
                 </p>
               )}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-col items-end gap-1">
               <button
-                onClick={() => {
-                  refreshLeads();
-                  window.location.reload();
-                }}
-                className="px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 flex items-center gap-2"
+                onClick={checkForNewLeads}
+                disabled={checking}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md bg-white hover:bg-gray-50 disabled:opacity-60 disabled:cursor-wait flex items-center gap-2"
               >
-                <span>🔄</span> Refresh Results
+                <span className={checking ? 'animate-spin' : ''}>🔄</span>
+                {checking ? 'Checking…' : 'Refresh Results'}
               </button>
+              {refreshMessage && (
+                <span className="text-xs text-gray-500">{refreshMessage}</span>
+              )}
             </div>
           </div>
 
@@ -193,7 +288,7 @@ export default function DashboardPage() {
             {['all', 'Hiring', 'Funding', 'Tender', 'ERP', 'AI', 'Cloud'].map(filter => (
               <button
                 key={filter}
-                onClick={() => setActiveFilter(filter)}
+                onClick={() => applyFilter(filter)}
                 className={`px-3 py-1 text-xs rounded-full border transition-all ${
                   activeFilter === filter
                     ? 'bg-blue-100 text-blue-700 border-transparent'
@@ -209,7 +304,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Table */}
-          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div id="opportunities" className="bg-white border border-gray-200 rounded-lg overflow-hidden scroll-mt-4">
             <div className="flex justify-between items-center px-4 py-3 border-b border-gray-200">
               <span className="text-sm font-medium text-gray-900">Opportunities</span>
               <div className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-500 bg-gray-50">

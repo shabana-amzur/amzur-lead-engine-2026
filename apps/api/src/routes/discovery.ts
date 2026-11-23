@@ -29,6 +29,51 @@ router.post('/run', authenticateToken, async (req: AuthRequest, res: Response) =
   }
 });
 
+// Dashboard refresh: scan for new leads unless one ran recently.
+// Public (the dashboard has no login), so the cooldown is what keeps repeated
+// refreshes from burning Tavily credits. Search results barely change within
+// the cooldown window, so skipping loses nothing.
+const REFRESH_COOLDOWN_MINUTES = parseInt(process.env.SCAN_COOLDOWN_MINUTES || '30', 10);
+// A scan that started this recently and hasn't completed is assumed to still be running.
+const IN_PROGRESS_WINDOW_MINUTES = 5;
+
+router.post('/refresh', async (req, res: Response) => {
+  try {
+    const latest = await prisma.scanRun.findFirst({ orderBy: { startedAt: 'desc' } });
+
+    if (latest) {
+      const minutesSinceStart = (Date.now() - new Date(latest.startedAt).getTime()) / 60000;
+
+      if (!latest.completedAt && minutesSinceStart < IN_PROGRESS_WINDOW_MINUTES) {
+        return res.json({ status: 'in_progress', newLeadsFound: 0 });
+      }
+
+      if (latest.completedAt && minutesSinceStart < REFRESH_COOLDOWN_MINUTES) {
+        const nextScanAt = new Date(
+          new Date(latest.startedAt).getTime() + REFRESH_COOLDOWN_MINUTES * 60000
+        );
+        return res.json({
+          status: 'skipped',
+          newLeadsFound: 0,
+          lastScanAt: latest.startedAt,
+          nextScanAt,
+        });
+      }
+    }
+
+    console.log('🔄 Dashboard refresh triggered lead discovery');
+    const { discoverLeads } = await import('../services/discoveryEngine.js');
+    const summary = await discoverLeads();
+    res.json({ status: 'completed', newLeadsFound: summary.newLeadsFound, summary });
+  } catch (error) {
+    console.error('Refresh discovery failed:', error);
+    res.status(500).json({
+      error: 'Failed to check for new leads',
+      code: (error as any)?.code ?? (error as any)?.errorCode ?? (error as any)?.name,
+    });
+  }
+});
+
 // Daily scheduled scan, called by Vercel Cron (see vercel.json).
 // Vercel sends "Authorization: Bearer <CRON_SECRET>"; refuse anything else so
 // the public can't trigger scans. Must stay above the '/:id' route.
