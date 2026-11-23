@@ -29,6 +29,27 @@ router.post('/run', authenticateToken, async (req: AuthRequest, res: Response) =
   }
 });
 
+// Daily scheduled scan, called by Vercel Cron (see vercel.json).
+// Vercel sends "Authorization: Bearer <CRON_SECRET>"; refuse anything else so
+// the public can't trigger scans. Must stay above the '/:id' route.
+router.get('/cron', async (req, res: Response) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.headers.authorization !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    console.log('⏰ Scheduled lead discovery triggered by Vercel Cron');
+    const { discoverLeads } = await import('../services/discoveryEngine.js');
+    const summary = await discoverLeads();
+    console.log('Scheduled discovery completed:', summary);
+    res.json({ status: 'completed', summary });
+  } catch (error) {
+    console.error('Scheduled discovery failed:', error);
+    res.status(500).json({ error: 'Scheduled discovery failed' });
+  }
+});
+
 // Get discovery scan history (protected route)
 router.get('/history', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
