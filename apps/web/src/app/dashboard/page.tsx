@@ -211,7 +211,7 @@ export default function DashboardPage() {
             </div>
           )}
           <div className="text-[10px] text-gray-400 ml-5">
-            Next: Daily at 6:00 AM UTC
+            Runs on every refresh
           </div>
         </div>
       </div>

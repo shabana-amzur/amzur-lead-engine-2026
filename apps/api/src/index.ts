@@ -6,7 +6,6 @@ import morgan from 'morgan';
 import authRoutes from './routes/auth';
 import leadsRoutes from './routes/leads';
 import discoveryRoutes from './routes/discovery';
-import { startScheduler } from './scheduler';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -40,7 +39,6 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 if (!process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`API Server running on http://localhost:${PORT}`);
-    startScheduler();
   });
 }
 
