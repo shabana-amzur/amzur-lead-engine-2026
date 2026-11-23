@@ -137,42 +137,42 @@ const SEARCHES = [
   {
     kind: 'linkedin',
     depth: 'basic',
-    query: 'site:linkedin.com/posts "seeking recommendations" OR "looking for recommendations" OR "can anyone recommend" NetSuite OR ERP partner OR consultant',
+    query: 'site:linkedin.com/posts "seeking recommendations" OR "looking for recommendations" OR "can anyone recommend" NetSuite OR ERP partner OR consultant -hiring -jobs',
     lob: 'ERP',
     intent: 'Asked on LinkedIn for a NetSuite / ERP partner',
   },
   {
     kind: 'linkedin',
     depth: 'basic',
-    query: 'site:linkedin.com/posts "seeking recommendations" OR "looking for recommendations" OR "can anyone recommend" "cloud migration" OR AWS OR Azure partner OR consultant',
+    query: 'site:linkedin.com/posts "seeking recommendations" OR "looking for recommendations" OR "can anyone recommend" "cloud migration" OR AWS OR Azure partner OR consultant -hiring -jobs',
     lob: 'Cloud',
     intent: 'Asked on LinkedIn for a cloud partner',
   },
   {
     kind: 'linkedin',
     depth: 'basic',
-    query: 'site:linkedin.com/posts "can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" "software development company" OR "app development" OR "development partner"',
+    query: 'site:linkedin.com/posts "can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" "software development company" OR "app development" OR "development partner" -hiring -jobs',
     lob: 'Application Development',
     intent: 'Asked on LinkedIn for a development partner',
   },
   {
     kind: 'linkedin',
     depth: 'basic',
-    query: 'site:linkedin.com/posts "can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" RPA OR UiPath OR "process automation" partner OR consultant',
+    query: 'site:linkedin.com/posts "can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" RPA OR UiPath OR "process automation" partner OR consultant -hiring -jobs',
     lob: 'Process Automation',
     intent: 'Asked on LinkedIn for an automation partner',
   },
   {
     kind: 'linkedin',
     depth: 'basic',
-    query: 'site:linkedin.com/posts "can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" mainframe OR "legacy modernization" OR "legacy system" partner OR consultant',
+    query: 'site:linkedin.com/posts "can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" mainframe OR "legacy modernization" OR "legacy system" partner OR consultant -hiring -jobs',
     lob: 'Legacy Modernization',
     intent: 'Asked on LinkedIn for a modernization partner',
   },
   {
     kind: 'linkedin',
     depth: 'basic',
-    query: 'site:linkedin.com/posts "can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" "offshore development" OR "dedicated development team" OR "development team in India"',
+    query: 'site:linkedin.com/posts "can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" "offshore development" OR "dedicated development team" OR "development team in India" -hiring -jobs',
     lob: 'Offshore',
     intent: 'Asked on LinkedIn for an offshore team',
   },
@@ -319,6 +319,7 @@ function linkedInSlug(url) {
 function linkedInAuthor(result) {
   const title = result.title || '';
   const patterns = [
+    /^([^|]{2,60}?)\s*\|\s*\d+ comments/i, // "Mehul Patel | 37 comments"
     /\|\s*([^|]{2,60}?)\s+posted on the topic/i,
     /^([^:|]{2,60}?)\s+on LinkedIn:/i,
     /^([^|]{2,60}?)['’]s Post/i,
@@ -327,6 +328,9 @@ function linkedInAuthor(result) {
     const match = title.match(pattern);
     if (match) return match[1].replace(/,.*$/, '').trim();
   }
+  const content = result.content || '';
+  const fromText = content.match(/^([^|]{2,60}?)\s*\|\s*\d+ comments/i) || content.match(/^([^|]{2,60}?)['’]s Post/i);
+  if (fromText) return fromText[1].replace(/,.*$/, '').trim();
   const slug = linkedInSlug(result.url || '');
   if (!slug) return null;
   return slug
