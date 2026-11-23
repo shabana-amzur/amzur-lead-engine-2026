@@ -64,7 +64,7 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     });
   } catch (error) {
     console.error('Error fetching leads:', error);
-    res.status(500).json({ error: 'Failed to fetch leads' });
+    res.status(500).json({ error: 'Failed to fetch leads', code: (error as any)?.code ?? (error as any)?.errorCode ?? (error as any)?.name });
   }
 });
 
@@ -84,7 +84,7 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
     res.json({ lead });
   } catch (error) {
     console.error('Error fetching lead:', error);
-    res.status(500).json({ error: 'Failed to fetch lead' });
+    res.status(500).json({ error: 'Failed to fetch lead', code: (error as any)?.code ?? (error as any)?.errorCode ?? (error as any)?.name });
   }
 });
 

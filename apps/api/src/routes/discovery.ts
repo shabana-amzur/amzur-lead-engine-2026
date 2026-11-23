@@ -76,7 +76,7 @@ router.get('/history', authenticateToken, async (req: AuthRequest, res: Response
     });
   } catch (error) {
     console.error('Error fetching scans:', error);
-    res.status(500).json({ error: 'Failed to fetch scan history' });
+    res.status(500).json({ error: 'Failed to fetch scan history', code: (error as any)?.code ?? (error as any)?.errorCode ?? (error as any)?.name });
   }
 });
 
@@ -95,7 +95,7 @@ router.get('/latest', authenticateToken, async (req: AuthRequest, res: Response)
     res.json({ scan: latestScan });
   } catch (error) {
     console.error('Error fetching latest scan:', error);
-    res.status(500).json({ error: 'Failed to fetch latest scan' });
+    res.status(500).json({ error: 'Failed to fetch latest scan', code: (error as any)?.code ?? (error as any)?.errorCode ?? (error as any)?.name });
   }
 });
 
@@ -115,7 +115,7 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
     res.json({ scan });
   } catch (error) {
     console.error('Error fetching scan:', error);
-    res.status(500).json({ error: 'Failed to fetch scan' });
+    res.status(500).json({ error: 'Failed to fetch scan', code: (error as any)?.code ?? (error as any)?.errorCode ?? (error as any)?.name });
   }
 });
 
