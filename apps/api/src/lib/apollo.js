@@ -108,12 +108,28 @@ async function findDecisionMakers({ website, companyName, lob }) {
   return { candidates, matchedBy: domain ? `domain ${domain}` : `company name "${companyName}"` };
 }
 
-/** 1 credit when found: the person's work email and profile. */
-async function revealContact(personId) {
-  const data = await apollo('people/match', { id: personId, reveal_personal_emails: false });
+// Phone numbers from an Apollo person record, best first (mobile / direct before others).
+function phonesFrom(person) {
+  const rank = (p) => ({ mobile: 0, direct_dial: 1, work_direct: 1, work: 2 }[p.type_cd || p.type] ?? 3);
+  return (person?.phone_numbers || [])
+    .filter((p) => p && (p.sanitized_number || p.raw_number))
+    .sort((a, b) => rank(a) - rank(b))
+    .map((p) => ({ number: p.sanitized_number || p.raw_number, type: p.type_cd || p.type || null }));
+}
+
+/**
+ * Reveal a person. Email: 1 credit when found. With `webhookUrl`, also asks
+ * Apollo for their phone numbers (extra credits when found); Apollo sends
+ * those to the webhook a little later.
+ */
+async function revealContact(personId, { webhookUrl } = {}) {
+  const body = { id: personId, reveal_personal_emails: false };
+  if (webhookUrl) Object.assign(body, { reveal_phone_number: true, webhook_url: webhookUrl });
+  const data = await apollo('people/match', body);
   const person = data.person;
   if (!person) return null;
-  const phone = (person.phone_numbers || [])[0]?.sanitized_number || person.organization?.primary_phone?.sanitized_number || null;
+  const phones = phonesFrom(person);
+  const phone = phones[0]?.number || person.organization?.primary_phone?.sanitized_number || null;
   return {
     id: person.id,
     name: person.name || [person.first_name, person.last_name].filter(Boolean).join(' '),
@@ -122,7 +138,9 @@ async function revealContact(personId) {
     emailStatus: person.email_status || null,
     linkedinUrl: person.linkedin_url || null,
     phone,
-    phoneIsCompany: !(person.phone_numbers || []).length && !!phone,
+    phoneIsCompany: !phones.length && !!phone,
+    phones,
+    phoneStatus: webhookUrl ? (phones.length ? 'found' : 'pending') : undefined,
     location: [person.city, person.state, person.country].filter(Boolean).join(', ') || null,
     organization: person.organization?.name || null,
     icpRank: icpRank(person.title),
@@ -151,4 +169,4 @@ async function enrichCompany(website) {
   };
 }
 
-module.exports = { isConfigured, findDecisionMakers, revealContact, enrichCompany, ApolloError, icpRank };
+module.exports = { isConfigured, findDecisionMakers, revealContact, enrichCompany, phonesFrom, ApolloError, icpRank };

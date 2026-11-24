@@ -208,21 +208,49 @@ router.post('/:id/contacts/search', authenticateToken, async (req: AuthRequest, 
   }
 });
 
-// 1 credit: reveal one person's email and profile. Already revealed people are
-// returned from the lead without calling Apollo again.
+// Signed token for Apollo's phone webhook, so only Apollo calls for our own
+// leads can write phone numbers.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const crypto = require('crypto');
+const webhookToken = (leadId: string, personId: string) =>
+  crypto.createHmac('sha256', process.env.JWT_SECRET || 'lead-engine').update(`${leadId}:${personId}`).digest('hex').slice(0, 32);
+
+// Public address of this API, for Apollo to send phone numbers back to.
+function publicApiUrl(req: AuthRequest): string | null {
+  if (process.env.APOLLO_WEBHOOK_BASE_URL) return process.env.APOLLO_WEBHOOK_BASE_URL.replace(/\/$/, '');
+  const host = req.get('x-forwarded-host') || req.get('host') || '';
+  if (!host || /localhost|127\.0\.0\.1/.test(host)) return null;
+  return `https://${host}`;
+}
+
+// Reveal one person. type 'email': 1 credit when found. type 'phone': the
+// email reveal plus phone numbers (extra credits when found), which Apollo
+// delivers to /api/leads/apollo/phone-webhook a few seconds later.
 router.post('/:id/contacts/reveal', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { personId } = req.body || {};
+    const { personId, type = 'email' } = req.body || {};
     if (!/^[a-f0-9]{24}$/.test(personId || '')) return res.status(400).json({ error: 'personId is required' });
     const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
     const { signals, saved } = apolloSignals(lead);
     const contacts: any[] = saved.contacts || [];
-    if (contacts.some((c) => c.id === personId)) return res.json({ apollo: saved, alreadyRevealed: true });
+    const existing = contacts.find((c) => c.id === personId);
+    if (existing && (type === 'email' || existing.phoneStatus === 'found' || existing.phoneStatus === 'pending')) {
+      return res.json({ apollo: saved, alreadyRevealed: true });
+    }
 
-    const contact = await apollo.revealContact(personId);
+    let webhookUrl: string | undefined;
+    if (type === 'phone') {
+      const base = publicApiUrl(req);
+      if (!base) {
+        return res.status(400).json({ error: 'Phone numbers can only be revealed on the deployed app: Apollo sends them to a public web address.' });
+      }
+      webhookUrl = `${base}/api/leads/apollo/phone-webhook?lead=${lead.id}&person=${personId}&token=${webhookToken(lead.id, personId)}`;
+    }
+    const contact = await apollo.revealContact(personId, { webhookUrl });
     if (!contact) return res.status(404).json({ error: 'Apollo could not find this person (no credit used).' });
-    const nextApollo = { ...saved, contacts: [...contacts, contact] };
+    const merged = existing ? { ...existing, ...contact, email: contact.email || existing.email } : contact;
+    const nextApollo = { ...saved, contacts: existing ? contacts.map((c) => (c.id === personId ? merged : c)) : [...contacts, merged] };
     const data: any = { signals: { ...signals, apollo: nextApollo } };
     // The best revealed ICP contact becomes the lead's outreach email.
     const best = [...nextApollo.contacts].filter((c) => c.email).sort((a, b) => b.icpRank - a.icpRank)[0];
@@ -231,6 +259,41 @@ router.post('/:id/contacts/reveal', authenticateToken, async (req: AuthRequest, 
     res.json({ apollo: (updated.signals as any).apollo });
   } catch (error) {
     apolloFailure(res, error);
+  }
+});
+
+// Apollo calls this (no login) with a revealed person's phone numbers.
+router.post('/apollo/phone-webhook', async (req: any, res: Response) => {
+  try {
+    const { lead: leadId, person: personId, token } = req.query || {};
+    if (!leadId || !personId || token !== webhookToken(String(leadId), String(personId))) {
+      return res.status(403).json({ error: 'Invalid webhook token' });
+    }
+    // Apollo's payload lists people with phone_numbers; find this person's.
+    const people: any[] = [];
+    const collect = (value: any) => {
+      if (!value || typeof value !== 'object') return;
+      if (Array.isArray(value)) return value.forEach(collect);
+      if (Array.isArray(value.phone_numbers)) people.push(value);
+      Object.values(value).forEach((child) => typeof child === 'object' && collect(child));
+    };
+    collect(req.body);
+    const person = people.find((p) => p.id === personId) || people[0];
+    const phones = apollo.phonesFrom(person);
+
+    const lead = await prisma.lead.findUnique({ where: { id: String(leadId) } });
+    if (!lead) return res.json({ ok: true });
+    const { signals, saved } = apolloSignals(lead);
+    const contacts = (saved.contacts || []).map((c: any) =>
+      c.id === personId
+        ? { ...c, phones, phone: phones[0]?.number || c.phone, phoneIsCompany: phones.length ? false : c.phoneIsCompany, phoneStatus: phones.length ? 'found' : 'none' }
+        : c
+    );
+    await prisma.lead.update({ where: { id: lead.id }, data: { signals: { ...signals, apollo: { ...saved, contacts } } } });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Apollo phone webhook error:', (error as any)?.message);
+    res.status(500).json({ error: 'Webhook failed' });
   }
 });
 

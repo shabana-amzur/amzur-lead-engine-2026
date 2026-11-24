@@ -112,8 +112,9 @@ export const leadsAPI = {
 export const apolloAPI = {
   status: async () => fetchAPI('/api/leads/apollo/status'),
   findContacts: async (leadId) => fetchAPI(`/api/leads/${leadId}/contacts/search`, { method: 'POST' }),
-  revealContact: async (leadId, personId) =>
-    fetchAPI(`/api/leads/${leadId}/contacts/reveal`, { method: 'POST', body: JSON.stringify({ personId }) }),
+  // type 'email' (1 credit) or 'phone' (email + phone numbers, extra credits).
+  revealContact: async (leadId, personId, type = 'email') =>
+    fetchAPI(`/api/leads/${leadId}/contacts/reveal`, { method: 'POST', body: JSON.stringify({ personId, type }) }),
   enrichCompany: async (leadId) => fetchAPI(`/api/leads/${leadId}/company/enrich`, { method: 'POST' }),
 };
 

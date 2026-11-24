@@ -670,7 +670,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                     <div className="text-xs text-gray-400 mt-2">Once you know their company, these roles there may also be involved:</div>
                   </div>
                 )}
-                {!fromLinkedIn && <div className="text-xs text-gray-400 mb-2">Roles to target:</div>}
+                {!fromLinkedIn && <div className="text-xs text-gray-400 mb-2">Roles to target{(lead.signals?.apollo?.candidates || []).length ? ' if you need others' : ''}:</div>}
                 <ul className="space-y-3">
                   {brief.contacts.map(({ role, why }) => (
                     <li key={role} className="text-sm">
