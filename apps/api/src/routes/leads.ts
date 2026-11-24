@@ -3,6 +3,10 @@ import prisma from '../lib/prisma';
 import { AuthRequest, authenticateToken } from '../middleware/auth';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { LEAD_MAX_AGE_DAYS, isRecent } = require('../config/recency');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { checkIcp } = require('../lib/icp');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const apollo = require('../lib/apollo');
 
 const router = Router();
 
@@ -23,6 +27,8 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     const recentDays = parseInt(req.query.recentDays as string) || LEAD_MAX_AGE_DAYS;
     // Only target regions (USA, UAE, Europe, India) or unknown location, unless includeOtherRegions=true.
     const includeOtherRegions = req.query.includeOtherRegions === 'true';
+    // Leads clearly outside the ideal customer profile are hidden unless includeOutsideIcp=true.
+    const includeOutsideIcp = req.query.includeOutsideIcp === 'true';
 
     // Build filter conditions
     const where: any = {};
@@ -57,7 +63,11 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       : matching.filter((lead: any) => isRecent(lead.signals?.postedAt, recentDays));
     const inRegion = includeOtherRegions ? recent : recent.filter((lead: any) => lead.signals?.geography !== 'Other');
     // Job postings found to be closed are no longer worth contacting.
-    const visible = includeOlder ? inRegion : inRegion.filter((lead: any) => lead.signals?.jobOpen !== false);
+    const open = includeOlder ? inRegion : inRegion.filter((lead: any) => lead.signals?.jobOpen !== false);
+    // Validate every lead against the ICP before it is shown (always current,
+    // so older leads are covered without a backfill).
+    const checked = open.map((lead: any) => ({ ...lead, icp: checkIcp(lead) }));
+    const visible = includeOutsideIcp ? checked : checked.filter((lead: any) => lead.icp.status !== 'outside');
     const total = visible.length;
     const leads = visible.slice((page - 1) * limit, page * limit);
 
@@ -66,7 +76,8 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       recentDays: includeOlder ? null : recentDays,
       hiddenOlder: matching.length - recent.length,
       hiddenOtherRegions: recent.length - inRegion.length,
-      hiddenClosed: inRegion.length - visible.length,
+      hiddenClosed: inRegion.length - open.length,
+      hiddenOutsideIcp: checked.length - visible.length,
       pagination: {
         total,
         page,
@@ -93,7 +104,7 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
       return res.status(404).json({ error: 'Lead not found' });
     }
 
-    res.json({ lead });
+    res.json({ lead: { ...lead, icp: checkIcp(lead) } });
   } catch (error) {
     console.error('Error fetching lead:', error);
     res.status(500).json({ error: 'Failed to fetch lead', code: (error as any)?.code ?? (error as any)?.errorCode ?? (error as any)?.name });
@@ -160,6 +171,94 @@ router.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response)
   } catch (error) {
     console.error('Error deleting lead:', error);
     res.status(500).json({ error: 'Failed to delete lead' });
+  }
+});
+
+// ---- Apollo contacts (only when a user asks; reveals cost Apollo credits) ----
+
+const apolloSignals = (lead: any) => {
+  const signals = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
+  return { signals, saved: signals.apollo || {} };
+};
+
+const apolloFailure = (res: Response, error: any) => {
+  const status = error?.status && error.status >= 400 && error.status < 600 ? error.status : 500;
+  console.error('Apollo error:', error?.message);
+  res.status(status).json({ error: error?.message || 'Apollo request failed' });
+};
+
+// Whether Apollo is set up on this API.
+router.get('/apollo/status', authenticateToken, (_req: AuthRequest, res: Response) => {
+  res.json({ configured: apollo.isConfigured() });
+});
+
+// Free: find ICP decision makers at the lead's company.
+router.post('/:id/contacts/search', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const { signals, saved } = apolloSignals(lead);
+    const website = signals.company?.website || lead.website;
+    const result = await apollo.findDecisionMakers({ website, companyName: lead.companyName, lob: lead.lob });
+    const nextApollo = { ...saved, candidates: result.candidates, matchedBy: result.matchedBy, searchedAt: new Date().toISOString() };
+    const updated = await prisma.lead.update({ where: { id: lead.id }, data: { signals: { ...signals, apollo: nextApollo } } });
+    res.json({ apollo: (updated.signals as any).apollo });
+  } catch (error) {
+    apolloFailure(res, error);
+  }
+});
+
+// 1 credit: reveal one person's email and profile. Already revealed people are
+// returned from the lead without calling Apollo again.
+router.post('/:id/contacts/reveal', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { personId } = req.body || {};
+    if (!/^[a-f0-9]{24}$/.test(personId || '')) return res.status(400).json({ error: 'personId is required' });
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const { signals, saved } = apolloSignals(lead);
+    const contacts: any[] = saved.contacts || [];
+    if (contacts.some((c) => c.id === personId)) return res.json({ apollo: saved, alreadyRevealed: true });
+
+    const contact = await apollo.revealContact(personId);
+    if (!contact) return res.status(404).json({ error: 'Apollo could not find this person (no credit used).' });
+    const nextApollo = { ...saved, contacts: [...contacts, contact] };
+    const data: any = { signals: { ...signals, apollo: nextApollo } };
+    // The best revealed ICP contact becomes the lead's outreach email.
+    const best = [...nextApollo.contacts].filter((c) => c.email).sort((a, b) => b.icpRank - a.icpRank)[0];
+    if (best) data.outreachEmail = best.email;
+    const updated = await prisma.lead.update({ where: { id: lead.id }, data });
+    res.json({ apollo: (updated.signals as any).apollo });
+  } catch (error) {
+    apolloFailure(res, error);
+  }
+});
+
+// 1 credit: company revenue, headcount and founding year for the ICP check.
+router.post('/:id/company/enrich', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const { signals, saved } = apolloSignals(lead);
+    const company = await apollo.enrichCompany(signals.company?.website || lead.website);
+    if (!company) return res.status(404).json({ error: 'Apollo has no record of this company (no credit used).' });
+    const data: any = {
+      signals: {
+        ...signals,
+        apollo: { ...saved, company },
+        company: {
+          ...(signals.company || {}),
+          ...(company.founded ? { founded: company.founded } : {}),
+          ...(company.linkedinUrl && !signals.company?.linkedinUrl ? { linkedinUrl: company.linkedinUrl } : {}),
+        },
+      },
+    };
+    if (company.revenue) data.revenue = company.revenue;
+    if (company.employees) data.employees = company.employees;
+    const updated = await prisma.lead.update({ where: { id: lead.id }, data });
+    res.json({ lead: { ...updated, icp: checkIcp(updated) } });
+  } catch (error) {
+    apolloFailure(res, error);
   }
 });
 

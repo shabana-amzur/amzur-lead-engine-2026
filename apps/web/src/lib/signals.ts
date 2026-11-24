@@ -23,3 +23,31 @@ export function signalType(lead: any): string {
 export const SOURCE_TYPES = ['LinkedIn post', 'Job posting', 'Press release', 'Government RFP', 'Web page'];
 
 export const sourceType = (lead: any): string => describeSource(lead?.signals?.tavilyUrl).type;
+
+// Whether the buyer is still choosing a provider (signals.vendorStatus from the
+// API, set for press / news / RFP leads). Leads whose vendor status is unclear
+// are flagged "Review required" rather than treated as qualified.
+export const VENDOR_STATUS_OPTIONS = [
+  { value: 'open', label: 'Open requirement' },
+  { value: 'review', label: 'Review required' },
+  { value: 'other', label: 'Hiring / asked on LinkedIn' },
+];
+
+export function vendorStatus(lead: any): 'open' | 'review' | 'other' {
+  const status = lead?.signals?.vendorStatus;
+  return status === 'open' || status === 'review' ? status : 'other';
+}
+
+export const needsReview = (lead: any) => vendorStatus(lead) === 'review';
+
+export const vendorStatusReason = (lead: any): string | null => lead?.signals?.vendorCheck?.reason || null;
+
+// Ideal customer profile check from the API (lead.icp): $10M–$200M revenue,
+// established business, CTO / COO / CIO-level contact. Leads clearly outside
+// it are hidden by the API; the rest are 'match' or 'unverified'.
+export const ICP_OPTIONS = [
+  { value: 'match', label: 'Matches ICP' },
+  { value: 'unverified', label: 'ICP unverified' },
+];
+
+export const icpStatus = (lead: any): string => lead?.icp?.status || 'unverified';

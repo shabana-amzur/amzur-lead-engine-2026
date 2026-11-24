@@ -107,6 +107,16 @@ export const leadsAPI = {
   },
 };
 
+// Apollo contacts for a lead. Search is free; reveal and company lookup use
+// 1 Apollo credit each when found.
+export const apolloAPI = {
+  status: async () => fetchAPI('/api/leads/apollo/status'),
+  findContacts: async (leadId) => fetchAPI(`/api/leads/${leadId}/contacts/search`, { method: 'POST' }),
+  revealContact: async (leadId, personId) =>
+    fetchAPI(`/api/leads/${leadId}/contacts/reveal`, { method: 'POST', body: JSON.stringify({ personId }) }),
+  enrichCompany: async (leadId) => fetchAPI(`/api/leads/${leadId}/company/enrich`, { method: 'POST' }),
+};
+
 // Discovery Scan API
 export const scanAPI = {
   trigger: async () => {

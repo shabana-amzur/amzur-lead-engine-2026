@@ -7,75 +7,39 @@ import { lobBadge, lobLabel } from '@/lib/lobs';
 import { industryBadge, isPriorityIndustry } from '@/lib/industries';
 import { describeSource, hostname, isLinkedInLead } from '@/lib/sources';
 import { regionLabel } from '@/lib/regions';
+import { buildBrief } from '@/lib/leadBrief';
+import ApolloContacts, { ApolloCompanyButton } from '@/components/ApolloContacts';
 import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 
-// Suggested approach and buyer roles per line of business. These are
-// playbook suggestions, not data about the company.
-const PLAYBOOK: Record<string, { pitch: string; talkingPoints: string[]; contacts: string[] }> = {
-  Cloud: {
-    pitch: 'Cloud migration and managed cloud operations',
-    talkingPoints: [
-      'Hiring cloud engineers points to more cloud work than the team can handle. Offer a migration or landing-zone engagement to close the gap now.',
-      'Propose a short cloud readiness / cost assessment as a low-risk first step.',
-      'Follow with managed cloud operations (monitoring, security, FinOps) once workloads move.',
-    ],
-    contacts: ['CTO', 'VP Infrastructure', 'Head of Cloud'],
-  },
-  ERP: {
-    pitch: 'NetSuite implementation, optimization and managed administration',
-    talkingPoints: [
-      'Hiring a NetSuite admin/developer usually means a backlog of customizations and integrations.',
-      'Offer managed NetSuite administration so they get a full team instead of one hire.',
-      'Lead with a NetSuite health check: scripts, workflows, integrations, reporting.',
-    ],
-    contacts: ['CFO', 'Controller', 'Director of Business Systems'],
-  },
-  Solution: {
-    pitch: 'DevOps, platform and site reliability engineering',
-    talkingPoints: [
-      'DevOps / SRE hiring signals scaling pains: CI/CD, infrastructure as code, reliability.',
-      'Offer a platform engineering pod to accelerate pipelines, Kubernetes and observability.',
-      'Propose a DevOps maturity assessment with a 90-day roadmap.',
-    ],
-    contacts: ['VP Engineering', 'Head of Platform', 'DevOps Manager'],
-  },
-  'Application Development': {
-    pitch: 'Product and application development teams',
-    talkingPoints: [
-      'Engineering hiring or new funding means a roadmap that is ahead of team capacity.',
-      'Offer a dedicated product engineering squad to ship features in parallel.',
-      'Highlight full-stack, mobile and API delivery with a fast start.',
-    ],
-    contacts: ['CTO', 'VP Engineering', 'Head of Product'],
-  },
-  'Legacy Modernization': {
-    pitch: 'Legacy and mainframe modernization',
-    talkingPoints: [
-      'COBOL / mainframe hiring shows they depend on legacy systems that are hard to staff.',
-      'Offer incremental modernization: re-platforming, API enablement, phased migration.',
-      'Propose a legacy portfolio assessment to size risk and quick wins.',
-    ],
-    contacts: ['CIO', 'Enterprise Architect', 'Head of Core Systems'],
-  },
-  'Process Automation': {
-    pitch: 'RPA, workflow and AI-driven process automation',
-    talkingPoints: [
-      'Automation hiring signals an automation program that needs to scale.',
-      'Offer an automation CoE: process discovery, RPA/UiPath build and AI agents.',
-      'Lead with an automation opportunity assessment showing ROI per process.',
-    ],
-    contacts: ['COO', 'Head of Automation', 'Director of Operations'],
-  },
-  Offshore: {
-    pitch: 'India dedicated teams and global capability centers',
-    talkingPoints: [
-      'Expanding engineering in India signals appetite for offshore capacity.',
-      'Offer dedicated teams or build-operate-transfer for their India center.',
-      'Emphasize speed to hire, retention and time-zone coverage.',
-    ],
-    contacts: ['CTO', 'VP Engineering', 'Head of Global Delivery'],
-  },
+const FIT_STYLES: Record<string, string> = {
+  'Strong fit': 'bg-emerald-50 border-emerald-200 text-emerald-900',
+  'Good fit': 'bg-blue-50 border-blue-200 text-blue-900',
+  'Needs qualification': 'bg-amber-50 border-amber-200 text-amber-900',
 };
+const FIT_BADGES: Record<string, string> = {
+  'Strong fit': 'bg-emerald-600 text-white',
+  'Good fit': 'bg-blue-600 text-white',
+  'Needs qualification': 'bg-amber-500 text-white',
+};
+
+function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        navigator.clipboard?.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+      className="text-xs px-2 py-1 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+    >
+      {copied ? '✓ Copied' : label}
+    </button>
+  );
+}
 
 // Technologies worth surfacing when they appear in the source text.
 const TECH_KEYWORDS = [
@@ -113,7 +77,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   const router = useRouter();
   const { id } = use(params);
 
-  const { data, error } = useSWR(`/api/leads/${id}`, () => leadsAPI.getById(id));
+  const { data, error, mutate } = useSWR(`/api/leads/${id}`, () => leadsAPI.getById(id));
 
   const backButton = (
     <button
@@ -146,7 +110,6 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   const context: string = signals.searchContext || '';
   const sourceUrl: string | undefined = signals.tavilyUrl;
   const source = describeSource(sourceUrl);
-  const playbook = PLAYBOOK[lead.lob];
   const company: string = lead.companyName;
   const fromLinkedIn = isLinkedInLead(lead);
   // Company profile looked up by the API (description, official website, LinkedIn page).
@@ -192,6 +155,8 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
     }[requirement?.kind || ''] || source.type;
 
   const possibleVendor = VENDOR_PATTERNS.test(context);
+  // Lead-specific fit analysis and approach, built from the source itself.
+  const brief = buildBrief(lead, { possibleVendor });
 
   const emailDomain = (lead.outreachEmail || '').split('@')[1] || '';
   const reliableEmail = lead.outreachEmail && !NON_PROSPECT_EMAIL_DOMAINS.test(emailDomain);
@@ -305,6 +270,26 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
           </div>
         )}
 
+        {/* Amzur fit summary */}
+        <section className={`mb-4 rounded-lg border p-5 ${FIT_STYLES[brief.fit.level]}`}>
+          <div className="flex flex-wrap items-center gap-3 mb-2">
+            <span className={`px-2.5 py-1 rounded-md text-xs font-semibold uppercase tracking-wide ${FIT_BADGES[brief.fit.level]}`}>
+              {brief.fit.level}
+            </span>
+            <span className="text-sm font-medium">Amzur fit · {brief.primaryService}</span>
+          </div>
+          <p className="text-[15px] leading-relaxed">{brief.summary}</p>
+          {brief.fit.reasons.length > 0 && (
+            <ul className="mt-3 flex flex-wrap gap-2">
+              {brief.fit.reasons.map((reason) => (
+                <li key={reason} className="text-xs px-2 py-1 rounded-md bg-white/70 border border-current/10">
+                  {reason}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Main column */}
           <div className="lg:col-span-2 space-y-4">
@@ -313,6 +298,14 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">What they need</h2>
                 <div className="flex items-center gap-2 text-xs">
                   <span className="px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 font-medium">{requirementLabel}</span>
+                  {signals.vendorStatus === 'review' && (
+                    <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 font-medium border border-amber-200">
+                      ⚠ Review required
+                    </span>
+                  )}
+                  {signals.vendorStatus === 'open' && (
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-medium">✓ Open requirement</span>
+                  )}
                   {signals.jobOpen === true && (
                     <span
                       className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-medium"
@@ -337,6 +330,14 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               <h3 className="text-xl font-semibold text-gray-900">
                 {requirement?.headline || lead.intentSignal || 'Requirement not recorded'}
               </h3>
+
+              {signals.vendorStatus === 'review' && (
+                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <span className="font-medium">Review required:</span>{' '}
+                  {signals.vendorCheck?.reason || 'Vendor selection status unclear'}. Check the source to confirm the company
+                  hasn&apos;t already chosen a provider before reaching out.
+                </div>
+              )}
 
               {requirement?.facts && requirement.facts.length > 0 && (
                 <div className="flex flex-wrap gap-2 mt-2">
@@ -454,6 +455,14 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                           <dd className="text-gray-900">{profile.founded}</dd>
                         </div>
                       )}
+                      {lead.revenue || (profile as any).revenue ? (
+                        <div className="flex justify-between sm:justify-start gap-3">
+                          <dt className="text-gray-500 w-24 shrink-0">Revenue</dt>
+                          <dd className="text-gray-900">
+                            ~${Math.round((lead.revenue || (profile as any).revenue) / 1e6).toLocaleString()}M (public estimate)
+                          </dd>
+                        </div>
+                      ) : null}
                       {profile.employees ? (
                         <div className="flex justify-between sm:justify-start gap-3">
                           <dt className="text-gray-500 w-24 shrink-0">Employees</dt>
@@ -526,30 +535,129 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               </dl>
             </section>
 
-            {playbook && (
-              <section className="bg-white border border-gray-200 rounded-lg p-6">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Suggested approach</h2>
-                <p className="text-gray-900">
-                  <span className="text-gray-500">Recommended service:</span>{' '}
-                  <span className="font-medium">{lead.recommendedService || playbook.pitch}</span>
-                </p>
-                <ul className="mt-3 space-y-2 text-sm text-gray-700">
-                  {playbook.talkingPoints.map((point) => (
-                    <li key={point} className="flex gap-2">
-                      <span className="text-gray-400">•</span>
-                      <span>{point}</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
+            <section className="bg-white border border-gray-200 rounded-lg p-6">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">How Amzur fits</h2>
+              <p className="text-xs text-gray-400 mb-4">Each need below is taken from the source and mapped to what Amzur delivers.</p>
+              <div className="divide-y divide-gray-100 border border-gray-100 rounded-md">
+                {brief.rows.map((row) => (
+                  <div key={row.need} className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4">
+                    <div>
+                      <div className="text-xs text-gray-400 uppercase tracking-wide mb-1">Their need</div>
+                      <div className="font-medium text-gray-900">{row.need}</div>
+                      {row.evidence && (
+                        <blockquote className="mt-1.5 text-sm text-gray-600 border-l-2 border-gray-200 pl-2 italic">
+                          “{row.evidence}”
+                        </blockquote>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-400 uppercase tracking-wide mb-1">Amzur delivers</div>
+                      <div className="text-sm text-gray-800">{row.amzur}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {brief.angles.length > 0 && (
+                <div className="mt-5">
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">How to position Amzur</h3>
+                  <ul className="space-y-2 text-sm text-gray-700">
+                    {brief.angles.map((angle) => (
+                      <li key={angle} className="flex gap-2">
+                        <span className="text-emerald-600 mt-0.5">✓</span>
+                        <span>{angle}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </section>
+
+            <section className="bg-white border border-gray-200 rounded-lg p-6">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Engagement plan</h2>
+              <ol className="relative border-l border-gray-200 ml-3 space-y-5">
+                {brief.steps.map((step, index) => (
+                  <li key={step.title} className="ml-6">
+                    <span className="absolute -left-3 flex items-center justify-center w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-semibold">
+                      {index + 1}
+                    </span>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <h3 className="font-medium text-gray-900">{step.title}</h3>
+                      <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{step.when}</span>
+                    </div>
+                    <p className="text-sm text-gray-700 mt-1">{step.detail}</p>
+                  </li>
+                ))}
+              </ol>
+            </section>
+
+            <section className="bg-white border border-gray-200 rounded-lg p-6">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Draft outreach</h2>
+                <CopyButton text={`Subject: ${brief.message.subject}\n\n${brief.message.body}`} label="Copy message" />
+              </div>
+              <div className="text-sm text-gray-500 mb-2">
+                Subject: <span className="text-gray-900 font-medium">{brief.message.subject}</span>
+              </div>
+              <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800 bg-gray-50 border border-gray-200 rounded-md p-4">
+                {brief.message.body}
+              </pre>
+              <p className="text-xs text-gray-400 mt-2">A starting point. Personalise it before sending.</p>
+            </section>
           </div>
 
           {/* Side column */}
           <div className="space-y-4">
-            {playbook && (
+            {lead.icp && (
+              <section className="bg-white border border-gray-200 rounded-lg p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">ICP check</h2>
+                  <span
+                    className={`text-xs font-medium px-2 py-0.5 rounded-md ${
+                      lead.icp.status === 'match'
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : lead.icp.status === 'outside'
+                          ? 'bg-red-50 text-red-700 border border-red-200'
+                          : 'bg-gray-50 text-gray-600 border border-gray-200'
+                    }`}
+                  >
+                    {lead.icp.status === 'match' ? '✓ Matches ICP' : lead.icp.status === 'outside' ? 'Outside ICP' : 'Unverified'}
+                  </span>
+                </div>
+                <dl className="space-y-3 text-sm">
+                  {[
+                    ['Size', '$10M–$200M revenue', lead.icp.checks?.size],
+                    ['Maturity', 'Established, existing systems', lead.icp.checks?.maturity],
+                    ['Role', 'CTO / COO / CIO / VP Tech / Head of DT', lead.icp.checks?.role],
+                  ].map(([label, target, check]: any) => (
+                    <div key={label} className="flex gap-2">
+                      <span
+                        className={`mt-0.5 shrink-0 w-4 text-center ${
+                          check?.status === 'match' ? 'text-emerald-600' : check?.status === 'outside' ? 'text-red-600' : 'text-gray-400'
+                        }`}
+                      >
+                        {check?.status === 'match' ? '✓' : check?.status === 'outside' ? '✕' : '?'}
+                      </span>
+                      <div>
+                        <dt className="text-gray-900 font-medium">
+                          {label} <span className="text-gray-400 font-normal text-xs">· {target}</span>
+                        </dt>
+                        <dd className="text-gray-600 text-xs mt-0.5">{check?.reason}</dd>
+                      </div>
+                    </div>
+                  ))}
+                </dl>
+                {!fromLinkedIn && <ApolloCompanyButton lead={lead} onChange={() => mutate()} />}
+              </section>
+            )}
+
               <section className="bg-white border border-gray-200 rounded-lg p-5">
                 <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Who to contact</h2>
+                {!fromLinkedIn && (
+                  <div className="mb-4 pb-4 border-b border-gray-100">
+                    <ApolloContacts lead={lead} onChange={() => mutate()} />
+                  </div>
+                )}
                 {fromLinkedIn && (
                   <div className="mb-3 pb-3 border-b border-gray-100 text-sm">
                     <div className="font-medium text-gray-900">{company}</div>
@@ -562,20 +670,24 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                     <div className="text-xs text-gray-400 mt-2">Once you know their company, these roles there may also be involved:</div>
                   </div>
                 )}
-                <ul className="space-y-2">
-                  {playbook.contacts.map((role) => (
-                    <li key={role} className="flex items-center justify-between text-sm">
-                      <span className="text-gray-800">{role}</span>
-                      {!fromLinkedIn && (
-                        <a
-                          href={linkedInPeople(role, company)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:text-blue-800"
-                        >
-                          Find on LinkedIn →
-                        </a>
-                      )}
+                {!fromLinkedIn && <div className="text-xs text-gray-400 mb-2">Roles to target:</div>}
+                <ul className="space-y-3">
+                  {brief.contacts.map(({ role, why }) => (
+                    <li key={role} className="text-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-gray-900 font-medium">{role}</span>
+                        {!fromLinkedIn && (
+                          <a
+                            href={linkedInPeople(role.replace(/ for .*$| of the .*$|\s*\/.*$/, ''), company)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:text-blue-800 shrink-0 text-xs mt-0.5"
+                          >
+                            Find →
+                          </a>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-0.5">{why}</div>
                     </li>
                   ))}
                 </ul>
@@ -594,6 +706,31 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                     </div>
                   )}
                 </div>
+              </section>
+
+            <section className="bg-white border border-gray-200 rounded-lg p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Questions to ask</h2>
+                <CopyButton text={brief.questions.map((q) => `- ${q}`).join('\n')} />
+              </div>
+              <ol className="space-y-2 text-sm text-gray-700 list-decimal list-inside">
+                {brief.questions.map((question) => (
+                  <li key={question}>{question}</li>
+                ))}
+              </ol>
+            </section>
+
+            {brief.risks.length > 0 && (
+              <section className="bg-white border border-gray-200 rounded-lg p-5">
+                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Watch-outs</h2>
+                <ul className="space-y-2 text-sm text-gray-700">
+                  {brief.risks.map((risk) => (
+                    <li key={risk} className="flex gap-2">
+                      <span className="text-amber-500">!</span>
+                      <span>{risk}</span>
+                    </li>
+                  ))}
+                </ul>
               </section>
             )}
 

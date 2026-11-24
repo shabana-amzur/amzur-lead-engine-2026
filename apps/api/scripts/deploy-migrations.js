@@ -44,7 +44,7 @@ if (process.env.VERCEL_ENV === 'production') {
   }
 
   // Data cleanups. Non-fatal: a failure here shouldn't block the deploy.
-  for (const script of ['dedupe-leads.js', 'remove-staffing-leads.js', 'remove-non-buyer-leads.js', 'remove-invalid-linkedin-leads.js', 'backfill-industry.js', 'backfill-posted-date.js', 'enrich-companies.js', 'backfill-geography.js']) {
+  for (const script of ['dedupe-leads.js', 'remove-staffing-leads.js', 'remove-non-buyer-leads.js', 'remove-invalid-linkedin-leads.js', 'remove-vendor-selected-leads.js', 'remove-large-enterprise-leads.js', 'backfill-industry.js', 'backfill-posted-date.js', 'enrich-companies.js', 'backfill-geography.js']) {
     const cleanup = spawnSync(process.execPath, [path.join(__dirname, script)], {
       cwd: path.join(repositoryRoot, 'apps', 'api'),
       stdio: 'inherit',

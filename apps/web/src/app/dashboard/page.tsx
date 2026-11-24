@@ -5,19 +5,21 @@ import { leadsAPI, scanAPI } from '@/lib/api';
 import { LOB_OPTIONS, lobBadge, lobLabel } from '@/lib/lobs';
 import { INDUSTRY_OPTIONS, PRIORITY_INDUSTRIES, industryBadge, isPriorityIndustry } from '@/lib/industries';
 import { describeSource, isLinkedInLead } from '@/lib/sources';
-import { SIGNAL_TYPES, SOURCE_TYPES, signalType, sourceType } from '@/lib/signals';
+import { ICP_OPTIONS, SIGNAL_TYPES, SOURCE_TYPES, VENDOR_STATUS_OPTIONS, icpStatus, signalType, sourceType, vendorStatus, vendorStatusReason } from '@/lib/signals';
 import { REGION_OPTIONS, leadRegion, regionLabel } from '@/lib/regions';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-type Filters = { region: string; source: string; signal: string; service: string; industry: string };
-const NO_FILTERS: Filters = { region: 'all', source: 'all', signal: 'all', service: 'all', industry: 'all' };
+type Filters = { icp: string; region: string; source: string; signal: string; status: string; service: string; industry: string };
+const NO_FILTERS: Filters = { icp: 'all', region: 'all', source: 'all', signal: 'all', status: 'all', service: 'all', industry: 'all' };
 
 function matchesFilters(lead: any, filters: Filters) {
   return (
+    (filters.icp === 'all' || icpStatus(lead) === filters.icp) &&
     (filters.region === 'all' || leadRegion(lead) === filters.region) &&
     (filters.source === 'all' || sourceType(lead) === filters.source) &&
     (filters.signal === 'all' || signalType(lead) === filters.signal) &&
+    (filters.status === 'all' || vendorStatus(lead) === filters.status) &&
     (filters.service === 'all' || lead.lob === filters.service) &&
     (filters.industry === 'all' || (lead.industry || 'Other') === filters.industry)
   );
@@ -157,7 +159,8 @@ export default function DashboardPage() {
   
   // Calculate metrics
   const totalLeads = leads.length;
-  const highIntentLeads = leads.filter((l: any) => l.leadScore >= 80).length;
+  // Review-required leads aren't qualified yet, so they never count as high intent.
+  const highIntentLeads = leads.filter((l: any) => l.leadScore >= 80 && vendorStatus(l) !== 'review').length;
   const tenders = leads.filter((l: any) => signalType(l) === 'Tender / RFP').length;
   const hiringCompanies = leads.filter((l: any) => signalType(l) === 'Hiring').length;
 
@@ -341,6 +344,12 @@ export default function DashboardPage() {
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-4 bg-white border border-gray-200 rounded-lg px-4 py-3">
             <FilterSelect
+              label="ICP"
+              value={filters.icp}
+              onChange={(value) => setFilter('icp', value)}
+              options={ICP_OPTIONS.map(({ value, label }) => ({ value, label, count: countWith('icp', value) }))}
+            />
+            <FilterSelect
               label="Region"
               value={filters.region}
               onChange={(value) => setFilter('region', value)}
@@ -357,6 +366,12 @@ export default function DashboardPage() {
               value={filters.signal}
               onChange={(value) => setFilter('signal', value)}
               options={SIGNAL_TYPES.map(({ value, label }) => ({ value, label, count: countWith('signal', value) }))}
+            />
+            <FilterSelect
+              label="Status"
+              value={filters.status}
+              onChange={(value) => setFilter('status', value)}
+              options={VENDOR_STATUS_OPTIONS.map(({ value, label }) => ({ value, label, count: countWith('status', value) }))}
             />
             <FilterSelect
               label="Service"
@@ -391,6 +406,7 @@ export default function DashboardPage() {
                   {leadsData.hiddenOlder ? ` · ${leadsData.hiddenOlder} older leads hidden` : ''}
                   {leadsData.hiddenOtherRegions ? ` · ${leadsData.hiddenOtherRegions} outside USA/UAE/Europe/India hidden` : ''}
                   {leadsData.hiddenClosed ? ` · ${leadsData.hiddenClosed} closed job postings hidden` : ''}
+                  {leadsData.hiddenOutsideIcp ? ` · ${leadsData.hiddenOutsideIcp} outside ICP hidden` : ''}
                 </span>
               ) : null}
             </span>
@@ -459,6 +475,14 @@ export default function DashboardPage() {
                           <span className="inline-flex items-center gap-1 text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded-lg border border-gray-200">
                             ⚡ {lead.intentSignal || 'N/A'}
                           </span>
+                          {vendorStatus(lead) === 'review' && (
+                            <div
+                              className="mt-1 inline-flex items-center text-[10px] font-medium text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded"
+                              title={vendorStatusReason(lead) || 'Vendor selection status unclear'}
+                            >
+                              ⚠ Review required
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">{lead.recommendedService || '-'}</td>
                         <td className="px-4 py-3">

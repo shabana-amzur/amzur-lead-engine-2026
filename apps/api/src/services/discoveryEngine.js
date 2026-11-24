@@ -12,34 +12,41 @@ import { searchNews } from '../lib/freeSources';
 import { LEAD_MAX_AGE_DAYS, isRecent } from '../config/recency';
 import { classifyGeography, leadGeography } from '../lib/geography';
 import { isJobOpen, jobApiUrl } from '../lib/jobStatus';
+import { classifyVendorIntent, headlineShowsVendorChosen } from '../lib/vendorIntent';
+import { largeEnterpriseReason } from '../lib/largeEnterprise';
+import { checkIcp } from '../lib/icp';
 
 // OpenAI client for scoreWithOpenAI (not yet used by the scan). Created only
 // when a key is configured: constructing it without one throws, which would
 // break every scan even though discovery itself only needs Tavily.
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
-// Searches targeting actual buying intent, tagged with the line of business
-// (LOB) and Amzur service each one feeds. Every LOB on the dashboard needs at
-// least one search here, or it can never receive leads.
+// Searches for genuine buying intent, tagged with the line of business (LOB)
+// and Amzur service each one feeds. Every LOB on the dashboard needs at least
+// one search here, or it can never receive leads.
+//
+// Press / news / RFP results only count when the buyer is still looking for a
+// provider (open RFP / RFQ / RFI / tender, seeking a partner). Announcements of
+// a vendor already selected, contracts awarded, partnerships, go-lives and case
+// studies are dropped by lib/vendorIntent.js; unclear ones are saved as
+// "Review required". So these searches ask for open calls, not "selects X".
 function regionalNewsSearches(region, edition, queries) {
   return queries.map((query) => ({
     kind: 'news',
     edition,
     requireRegion: region,
     allowUnknownRegion: true,
-    requireTechHeadline: true,
     query,
     lob: 'auto',
-    intent: `Technology decision in ${region === 'Europe' ? 'Europe' : region === 'UAE' ? 'the UAE' : 'India'} (news)`,
+    intent: `Open technology tender / RFP in ${region === 'Europe' ? 'Europe' : region === 'UAE' ? 'the UAE' : 'India'}`,
   }));
 }
 
-// Technology terms a regional news headline must contain to count.
-const TECH_HEADLINE =
-  /\b(erp|sap|s\/4hana|oracle|netsuite|dynamics|workday|salesforce|crm|cloud|aws|azure|google cloud|data (platform|centre|center)|digital transformation|digitali[sz]ation|automation|ai|agentic|artificial intelligence|software|platform|core banking|modernis|moderniz|it services|analytics|capability cent(re|er))\b/i;
+// The open-call phrases every RFP search is combined with.
+const OPEN_CALL_TERMS = '(RFP OR RFQ OR RFI OR tender OR "request for proposals" OR "seeks proposals" OR "invites bids")';
 
 const SEARCHES = [
-  // Cloud
+  // ---- Job postings (paid web search): hiring for the skills Amzur provides ----
   {
     query: 'site:greenhouse.io OR site:lever.co "Cloud Engineer" OR "AWS Engineer" OR "Azure Engineer"',
     lob: 'Cloud',
@@ -47,25 +54,11 @@ const SEARCHES = [
     intent: 'Hiring cloud engineers',
   },
   {
-    query: '"completes migration to AWS" OR "migrates to Microsoft Azure" OR "selects Google Cloud" OR "cloud migration milestone" 2026 site:businesswire.com OR site:prnewswire.com',
-    lob: 'Cloud',
-    service: 'Cloud Migration Services',
-    intent: 'Cloud migration initiative',
-  },
-  // ERP
-  {
     query: 'site:greenhouse.io OR site:lever.co "NetSuite Administrator" OR "NetSuite Developer" OR "ERP Analyst"',
     lob: 'ERP',
     service: 'NetSuite & ERP Services',
     intent: 'Hiring for NetSuite / ERP',
   },
-  {
-    query: '"selects Oracle NetSuite" OR "chooses NetSuite" OR "goes live on NetSuite" OR "selects NetSuite" 2026 site:businesswire.com OR site:prnewswire.com',
-    lob: 'ERP',
-    service: 'NetSuite & ERP Services',
-    intent: 'ERP modernization',
-  },
-  // Application Development
   {
     query: 'site:greenhouse.io OR site:lever.co "Senior Software Engineer" OR "Full Stack Engineer" OR "Mobile Engineer" new product',
     lob: 'Application Development',
@@ -73,36 +66,10 @@ const SEARCHES = [
     intent: 'Building new applications',
   },
   {
-    query: '"announces" "investment in digital transformation" OR "digital transformation program" OR "modernize its customer experience" 2026 site:businesswire.com OR site:prnewswire.com',
-    lob: 'Application Development',
-    service: 'Application Development',
-    intent: 'New digital product initiative',
-  },
-  {
-    query: '"Series B funding" "announces" 2026 site:techcrunch.com OR site:businesswire.com',
-    lob: 'Application Development',
-    service: 'Application Development',
-    intent: 'Recent Series B funding',
-  },
-  // Legacy Modernization
-  {
-    query: '"selects" OR "chooses" partner "to modernize" "legacy systems" OR "core banking system" OR "mainframe" 2026 site:businesswire.com OR site:prnewswire.com',
-    lob: 'Legacy Modernization',
-    service: 'Legacy Modernization',
-    intent: 'Modernizing legacy systems',
-  },
-  {
     query: 'site:greenhouse.io OR site:lever.co "Mainframe Developer" OR "COBOL Developer" OR "Legacy Modernization"',
     lob: 'Legacy Modernization',
     service: 'Legacy Modernization',
     intent: 'Hiring for legacy modernization',
-  },
-  // Process Automation
-  {
-    query: '"selects UiPath" OR "deploys UiPath" OR "chooses Automation Anywhere" OR "expands automation program" 2026 site:businesswire.com OR site:prnewswire.com',
-    lob: 'Process Automation',
-    service: 'Process Automation',
-    intent: 'Process automation initiative',
   },
   {
     query: 'site:greenhouse.io OR site:lever.co "RPA Developer" OR "UiPath Developer" OR "Automation Engineer"',
@@ -110,19 +77,11 @@ const SEARCHES = [
     service: 'Process Automation',
     intent: 'Hiring for process automation',
   },
-  // Solution Engineering
   {
     query: 'site:greenhouse.io OR site:lever.co "DevOps Engineer" OR "Platform Engineer" OR "Site Reliability Engineer"',
     lob: 'Solution',
     service: 'Solution Engineering',
     intent: 'Infrastructure needs',
-  },
-  // Offshore / India dedicated teams
-  {
-    query: '"opens" "technology center" OR "innovation center" OR "engineering center" OR "global capability center" India 2026 site:businesswire.com OR site:prnewswire.com',
-    lob: 'Offshore',
-    service: 'India Dedicated Teams',
-    intent: 'Expanding offshore team',
   },
   // Priority industries: Healthcare and Energy. These span every service, so
   // the line of business is inferred from the result text (lob: 'auto').
@@ -133,22 +92,40 @@ const SEARCHES = [
     intent: 'Healthcare company hiring for technology',
   },
   {
-    query: '"health system" OR hospital OR healthcare "selects" OR "migrates to" OR "modernizes" OR "automates" cloud OR NetSuite OR ERP OR "legacy systems" 2026 site:businesswire.com OR site:prnewswire.com',
-    lob: 'auto',
-    requireIndustry: 'Healthcare',
-    intent: 'Healthcare technology initiative',
-  },
-  {
     query: 'site:greenhouse.io OR site:lever.co energy OR utility OR "oil and gas" OR renewable "Cloud Engineer" OR "DevOps Engineer" OR "SAP" OR "NetSuite" OR "Automation Engineer"',
     lob: 'auto',
     requireIndustry: 'Energy',
     intent: 'Energy company hiring for technology',
   },
+  // ---- Open RFPs / RFQs / RFIs on the web (paid web search) ----
   {
-    query: 'utility OR "energy company" OR "oil and gas" OR renewable "selects" OR "migrates to" OR "modernizes" OR "automates" cloud OR SAP OR ERP OR "legacy systems" 2026 site:businesswire.com OR site:prnewswire.com',
+    query: '"request for proposals" OR RFP OR RFQ ERP OR NetSuite OR "Dynamics 365" OR SAP implementation 2026 proposals due -awarded',
+    lob: 'ERP',
+    service: 'NetSuite & ERP Services',
+    intent: 'Open RFP for ERP / NetSuite',
+  },
+  {
+    query: '"request for proposals" OR RFP OR RFQ "cloud migration" OR "cloud services" OR "managed services" OR AWS OR Azure 2026 proposals due -awarded',
+    lob: 'Cloud',
+    service: 'Cloud Migration Services',
+    intent: 'Open RFP for cloud services',
+  },
+  {
+    query: '"request for proposals" OR RFP OR RFQ "software development" OR "application development" OR "mobile app" OR "web portal" 2026 proposals due -awarded',
+    lob: 'Application Development',
+    service: 'Application Development',
+    intent: 'Open RFP for software development',
+  },
+  {
+    query: '"request for proposals" OR RFP OR RFI "legacy system" OR modernization OR "system replacement" OR mainframe 2026 proposals due -awarded',
+    lob: 'Legacy Modernization',
+    service: 'Legacy Modernization',
+    intent: 'Open RFP for legacy modernization',
+  },
+  {
+    query: '"request for proposals" OR RFP OR RFI "process automation" OR RPA OR "AI solution" OR "machine learning" OR "data analytics" 2026 proposals due -awarded',
     lob: 'auto',
-    requireIndustry: 'Energy',
-    intent: 'Energy technology initiative',
+    intent: 'Open RFP for automation / AI / data',
   },
   // LinkedIn posts where someone publicly asks for a provider. Only public,
   // search-indexed posts are found (no LinkedIn login or scraping).
@@ -196,51 +173,63 @@ const SEARCHES = [
     intent: 'Asked on LinkedIn for an offshore team',
   },
   // ---- Free sources (no search credits) ----
-  // Google News: recent announcements where the headline company is buying.
+  // Google News: open RFPs, RFIs and tenders where the organization is still
+  // choosing a provider.
   {
     kind: 'news',
-    query: '"selects NetSuite" OR "chooses NetSuite" OR "goes live on NetSuite" OR "implements NetSuite"',
+    query: `${OPEN_CALL_TERMS} (ERP OR NetSuite OR SAP OR Oracle OR "Dynamics 365" OR Workday)`,
     lob: 'ERP',
-    intent: 'Chose NetSuite / ERP (news)',
+    intent: 'Open RFP / tender for ERP',
   },
   {
     kind: 'news',
-    query: '"migrates to AWS" OR "moves to Microsoft Azure" OR "selects Google Cloud" OR "completes cloud migration"',
+    query: `${OPEN_CALL_TERMS} ("cloud migration" OR "cloud services" OR AWS OR Azure OR "managed services" OR "data center")`,
     lob: 'Cloud',
-    intent: 'Cloud migration announced (news)',
+    intent: 'Open RFP / tender for cloud services',
   },
   {
     kind: 'news',
-    query: '(selects OR chooses) ("legacy modernization" OR "mainframe modernization" OR "core system replacement")',
+    query: `${OPEN_CALL_TERMS} ("software development" OR "application development" OR "mobile app" OR "web portal" OR software)`,
+    lob: 'Application Development',
+    intent: 'Open RFP / tender for software development',
+  },
+  {
+    kind: 'news',
+    query: `${OPEN_CALL_TERMS} (modernization OR "legacy system" OR mainframe OR "core banking" OR "system replacement")`,
     lob: 'Legacy Modernization',
-    intent: 'Legacy modernization announced (news)',
+    intent: 'Open RFP / tender for modernization',
   },
   {
     kind: 'news',
-    query: '(selects OR chooses OR deploys) (UiPath OR "Automation Anywhere" OR "Blue Prism" OR "Power Automate")',
+    query: `${OPEN_CALL_TERMS} (automation OR RPA OR "artificial intelligence" OR "AI platform" OR "AI solution")`,
     lob: 'Process Automation',
-    intent: 'Automation program announced (news)',
+    intent: 'Open RFP / tender for automation / AI',
   },
   {
     kind: 'news',
-    query: '(hospital OR "health system" OR "medical center") (selects OR chooses OR implements) (cloud OR ERP OR Workday OR Oracle OR automation OR "digital transformation")',
+    query: `${OPEN_CALL_TERMS} (cybersecurity OR "data analytics" OR "data platform" OR "IT services" OR "systems integrator" OR DevOps)`,
+    lob: 'auto',
+    intent: 'Open RFP / tender for IT services',
+  },
+  {
+    kind: 'news',
+    query: '"seeking a technology partner" OR "seeking an implementation partner" OR "looking for a technology partner" OR "expressions of interest" software OR IT OR digital',
+    lob: 'auto',
+    intent: 'Seeking a technology partner',
+  },
+  {
+    kind: 'news',
+    query: `(hospital OR "health system" OR "health department" OR "medical center") ${OPEN_CALL_TERMS} (software OR EHR OR IT OR cloud OR ERP OR digital)`,
     lob: 'auto',
     requireIndustry: 'Healthcare',
-    intent: 'Healthcare technology decision (news)',
+    intent: 'Healthcare open RFP / tender for technology',
   },
   {
     kind: 'news',
-    query: '(utility OR "electric cooperative" OR "oil and gas" OR "energy company") (selects OR chooses OR implements) (SAP OR Oracle OR cloud OR ERP OR "digital transformation" OR automation)',
+    query: `(utility OR "electric cooperative" OR "energy company" OR "oil and gas") ${OPEN_CALL_TERMS} (software OR IT OR ERP OR SAP OR "customer information system" OR digital)`,
     lob: 'auto',
     requireIndustry: 'Energy',
-    intent: 'Energy technology decision (news)',
-  },
-  {
-    kind: 'news',
-    query: '"global capability center" OR "technology center" OR "engineering center" opens India',
-    headlineVerbs: 'expands|opens|inaugurates|launches|sets up',
-    lob: 'Offshore',
-    intent: 'Opening an India technology center (news)',
+    intent: 'Energy open RFP / tender for technology',
   },
   // Regional job posts (paid web search): roles that signal Amzur services in
   // European and UAE cities. The job's own location must be in that region.
@@ -276,12 +265,12 @@ const SEARCHES = [
     requireTechRole: true,
     intent: 'Hiring for technology in the UAE',
   },
-  // Regional news (free). Short "place + technology" queries: long OR-queries make
-  // Google News ignore the date limit. Kept only if the headline has a buyer verb
-  // and a technology term, and doesn't clearly name another region.
-  ...regionalNewsSearches('UAE', 'AE', ['UAE ERP', 'UAE SAP', 'UAE Oracle', 'UAE cloud', 'Dubai digital transformation', 'Abu Dhabi digital transformation', 'UAE AI platform', 'UAE core banking']),
-  ...regionalNewsSearches('Europe', 'GB', ['UK ERP', 'UK SAP', 'UK cloud migration', 'UK digital transformation', 'Germany SAP', 'Netherlands cloud', 'Ireland digital transformation', 'Europe ERP']),
-  ...regionalNewsSearches('India', 'IN', ['India ERP', 'India SAP', 'India cloud migration', 'India digital transformation', 'Bengaluru global capability centre', 'Hyderabad global capability centre']),
+  // Regional news (free). Short "place + tender + technology" queries: long
+  // OR-queries make Google News ignore the date limit. Kept only when the item
+  // is an open call for technology and doesn't clearly name another region.
+  ...regionalNewsSearches('UAE', 'AE', ['UAE tender software', 'UAE tender IT services', 'UAE RFP technology', 'Dubai tender digital', 'Abu Dhabi tender digital', 'UAE tender ERP', 'UAE tender AI']),
+  ...regionalNewsSearches('Europe', 'GB', ['UK tender software', 'UK council tender IT', 'NHS tender digital', 'UK procurement ERP', 'Ireland tender IT services', 'Germany tender software', 'Europe tender cloud']),
+  ...regionalNewsSearches('India', 'IN', ['India tender software', 'India RFP IT services', 'floats tender ERP', 'invites bids software', 'RFP digital transformation India', 'tender AI platform India']),
 ];
 
 // Amzur service recommended for each line of business.
@@ -587,27 +576,41 @@ Return ONLY valid JSON with this exact structure:
   }
 }
 
-// Company that is acting in a news headline, e.g.
-// "Rush University System for Health selects AGFA..." -> "Rush University System for Health".
-// Verbs where the headline company is the buyer. "Expands"/"launches" usually
-// mean a vendor talking about itself, so they're only used where a search asks.
-const BUYER_VERBS = 'selects|select|chooses|choose|picks|taps|implements|implement|deploys|adopts|goes live|went live|migrates|moves|completes|awards';
+// Organization that is asking for a provider in a headline, e.g.
+// "VA Issues RFI for Enterprise IT Systems Integrator" -> "VA" or
+// "National Park Service Request for Proposals for ..." -> "National Park Service".
+// Verbs where the headline organization is the one buying. Vendor-selection
+// verbs ("selects", "goes live") are not here: those leads are excluded.
+const REQUIREMENT_VERBS =
+  'issues|issued|releases|released|publishes|published|floats|floated|launches|launched|opens|opened|invites|invited|seeks|is seeking|seeking|requests|calls for|wants|eyes|plans|tenders|puts out|announces|is looking for|looking for|kicks off|starts|begins';
+
+const HEADLINE_NAME_CONNECTORS = new Set(['of', 'for', 'and', 'the', 'de', 'du', 'la', 'le', 'van', 'von', 'at', 'in', 'on', '&']);
+const GENERIC_NAMES = new Set(['government', 'govt', 'state', 'city', 'county', 'council', 'ministry', 'department', 'authority', 'no', 'the', 'it', 'this', 'exclusive', 'icymi', 'report', 'breaking']);
 
 function companyFromHeadline(title, extraVerbs) {
-  const verbs = extraVerbs ? `${BUYER_VERBS}|${extraVerbs}` : BUYER_VERBS;
-  const match = (title || '').match(new RegExp(`^(.{2,90}?)\\s+(${verbs})\\b`, 'i'));
+  const verbs = extraVerbs ? `${REQUIREMENT_VERBS}|${extraVerbs}` : REQUIREMENT_VERBS;
+  const match =
+    (title || '').match(new RegExp(`^(.{2,90}?)\\s+(${verbs})\\b`, 'i')) ||
+    (title || '').match(/^(.{2,90}?)\s+(request for (proposals?|quotations?|information|qualifications)|invitation to (tender|bid))\b/i);
   if (!match) return null;
   let name = match[1]
-    .replace(/^.*?:\s+/, '') // "'Absurd ambition': Pulumi" -> "Pulumi"
+    .replace(/^.*?:\s+/, '') // "Deadline Intel: Pasadena" -> "Pasadena"
     .replace(/^(UK|US|U\.S\.|UAE|India|Indian|Dutch|German|French|Irish|British|European)['’]s\s+/i, '') // "UK's AlRayan Bank" -> "AlRayan Bank"
     .replace(/^[A-Z][A-Za-z.\s-]{1,30}-based\s+/, '') // "New Jersey-based X" -> "X"
     .replace(/^.*\bparent company\s+/i, '') // "Royal Canin Parent Company Mars" -> "Mars"
-    .replace(/\s+and\s+.*$/i, '') // "X and Y Select" -> "X"
+    .replace(/\s+and\s+.*$/i, '') // "X and Y issue" -> "X"
     .replace(/['’]s$/, '')
+    .replace(/(\s+(rfp|rfq|rfi|rfx|eoi|tender|bid|bids|procurement))+$/i, '') // "VA RFI" -> "VA"
     .trim();
-  // Fragments, sentences and vendor self-descriptions are not company names.
+  // Fragments, sentences and vendor self-descriptions are not company names:
+  // names start with a capital and are mostly capitalised words
+  // ("Central Bank of Azerbaijan", not "Zelmier bets on AI to simplify government").
   if (!name || name.includes(',') || name.split(/\s+/).length > 7) return null;
-  if (/\b(provider|vendor|startup|firm|agency|report|study|survey|cancels|announces)\b/i.test(name)) return null;
+  if (!/^[A-Z0-9]/.test(name)) return null;
+  const lowercaseWords = name.split(/\s+/).filter((word) => /^[a-z]/.test(word) && !HEADLINE_NAME_CONNECTORS.has(word));
+  if (lowercaseWords.length >= 2) return null;
+  if (GENERIC_NAMES.has(name.toLowerCase())) return null;
+  if (/\b(provider|vendor|startup|firm|agency|report|study|survey|cancels|announces|public notice|notice|deadline|how|why|what)\b/i.test(name)) return null;
   return name;
 }
 
@@ -778,6 +781,7 @@ export async function enrichExistingLeads(limit = 15) {
         if (found?.headquarters) data.hq = found.headquarters;
         else if (lead.hq === 'USA') data.hq = null; // old placeholder, not real data
         if (found?.employees) data.employees = found.employees;
+        if (found?.revenue) data.revenue = found.revenue;
       }
       if (!date?.ok && !requirement?.ok && !profile?.ok && !todo.geography) return;
 
@@ -893,8 +897,20 @@ export async function discoverLeads() {
         continue;
       }
 
+      // Press, news and RFP pages are read for intent; job postings aren't.
+      const isRequirementItem = !isJobBoard(domain);
+      // A headline announcing a vendor already chosen, a contract awarded, a
+      // partnership or a go-live is not a lead, whoever the company is.
+      const chosen = isRequirementItem ? headlineShowsVendorChosen(result.title) : null;
+      if (chosen) {
+        console.log(`   ⏭️  Skipped: ${result.title} (${chosen})`);
+        continue;
+      }
+
       const companyName =
-        search.kind === 'news' ? companyFromHeadline(result.title, search.headlineVerbs) : extractCompanyName(result);
+        search.kind === 'news'
+          ? companyFromHeadline(result.title)
+          : extractCompanyName(result) || (isRequirementItem ? companyFromHeadline(result.title) : null);
       if (!companyName) {
         console.log(`   ⏭️  Skipped: ${result.title} (no company name)`);
         continue;
@@ -907,6 +923,14 @@ export async function discoverLeads() {
 
       if (NON_BUYERS.has(key) || describesItselfAsSeller(companyName, `${result.title} ${result.content || ''}`)) {
         console.log(`   ⏭️  Skipped: ${companyName} (sells services/products, not a buyer)`);
+        seenCompanies.add(key);
+        continue;
+      }
+
+      // Very large enterprises (Google, Microsoft, global banks...) aren't reachable prospects.
+      const tooLarge = largeEnterpriseReason(companyName);
+      if (tooLarge) {
+        console.log(`   ⏭️  Skipped: ${companyName} (${tooLarge})`);
         seenCompanies.add(key);
         continue;
       }
@@ -942,8 +966,6 @@ export async function discoverLeads() {
           ? `https://${careerDomain}`
           : `https://${companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`;
 
-      const score = scoreLead(industry, 60, 85);
-
       // Look up when the source was published and save the lead. Runs in
       // parallel with the rest of the scan; awaited after the loop.
       pendingSaves.push((async () => {
@@ -964,20 +986,48 @@ export async function discoverLeads() {
             return;
           }
         }
-        if (search.requireTechHeadline && !TECH_HEADLINE.test(result.title || '')) {
-          console.log(`   ⏭️  Skipped: ${companyName} (headline isn't about technology)`);
-          return;
-        }
         // Only recent needs: skip sources older than the window or without a date,
         // before spending a search credit on the company profile.
         if (!published || !isRecent(published.date)) {
           console.log(`   ⏭️  Skipped: ${companyName} (${published ? `posted ${published.date.slice(0, 10)}` : 'no posting date'}, older than ${LEAD_MAX_AGE_DAYS} days or unknown)`);
           return;
         }
+        // Only genuine open requirements: vendor not yet chosen. Unclear ones
+        // are kept but flagged for review instead of being qualified.
+        const vendorCheck = isRequirementItem
+          ? await classifyVendorIntent({ title: result.title, text: result.content, url: result.url })
+          : null;
+        if (vendorCheck?.decision === 'exclude') {
+          console.log(`   ⏭️  Skipped: ${companyName} (${vendorCheck.reason})`);
+          return;
+        }
+        const needsReview = vendorCheck?.decision === 'review';
+        const score = needsReview
+          ? scoreLead(industry, 50, 64)
+          : vendorCheck?.status === 'open'
+            ? scoreLead(industry, 80, 92)
+            : scoreLead(industry, 60, 85);
         const [profile, requirement] = await Promise.all([
           findCompanyProfile(companyName, { industry, sourceUrl: result.url }).catch(() => null),
           fromFeed ? feedRequirement(result) : findRequirementDetails(result.url, { companyName, title: result.title, text: result.content }).catch(() => undefined),
         ]);
+        const tooLargeByProfile = largeEnterpriseReason(companyName, profile?.employees);
+        if (tooLargeByProfile) {
+          console.log(`   ⏭️  Skipped: ${companyName} (${tooLargeByProfile})`);
+          return;
+        }
+        // Ideal customer profile: $10M–$200M revenue, established business.
+        const icp = checkIcp({
+          companyName,
+          industry,
+          revenue: profile?.revenue ?? null,
+          employees: profile?.employees ?? null,
+          signals: { company: profile, sourceTitle: result.title, searchContext: result.content },
+        });
+        if (icp.status === 'outside') {
+          console.log(`   ⏭️  Skipped: ${companyName} (outside ICP: ${icp.summary})`);
+          return;
+        }
         const website = profile?.website || companyWebsite;
         const geo = leadGeography({ requirement, profile, text: `${result.title || ''} ${result.content || ''}` });
         if (search.requireRegion && geo.region === 'Unknown') geo.region = search.requireRegion;
@@ -997,7 +1047,7 @@ export async function discoverLeads() {
             industry,
             website,
             employees: profile?.employees ?? null,
-            revenue: null,
+            revenue: profile?.revenue ?? null,
             hq: profile?.headquarters || geo.location || null,
             lob,
             intentSignal,
@@ -1009,9 +1059,15 @@ export async function discoverLeads() {
               techStack: [],
               whyThisLead: [
                 intentSignal,
+                ...(vendorCheck ? [needsReview ? `Review required: ${vendorCheck.reason}` : vendorCheck.reason] : []),
                 `Found via ${lob} search`,
                 `Source: ${domain}`,
               ],
+              // 'open': inviting vendors / no vendor chosen. 'review': unclear.
+              vendorStatus: vendorCheck ? (needsReview ? 'review' : 'open') : null,
+              vendorCheck: vendorCheck
+                ? { status: vendorCheck.status, reason: vendorCheck.reason, method: vendorCheck.method, checkedAt: new Date().toISOString() }
+                : null,
               searchContext: result.content?.substring(0, 500),
               dataSource: { news: 'Google News', tavily: 'Tavily', serper: 'Serper (Google)', you: 'You.com' }[result.provider] || 'Web search',
               tavilyUrl: result.url,
@@ -1032,7 +1088,7 @@ export async function discoverLeads() {
         });
 
         newLeadsFound++;
-        console.log(`      ✅ Saved ${companyName} (Score: ${score}, posted ${published ? published.date.slice(0, 10) : 'unknown'})`);
+        console.log(`      ✅ Saved ${companyName}${needsReview ? ' [review required]' : ''} (Score: ${score}, posted ${published ? published.date.slice(0, 10) : 'unknown'})`);
       } catch (error) {
         console.error(`      ❌ Error saving lead:`, error.message);
       }

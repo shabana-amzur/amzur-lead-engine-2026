@@ -37,6 +37,35 @@ const host = (url) => {
   }
 };
 
+// Annual revenue in USD from profile text, e.g. "Revenue: $45.2M",
+// "annual revenue of $120 million", "$1.2B in revenue". null when not stated.
+const UNITS = { k: 1e3, thousand: 1e3, m: 1e6, mm: 1e6, mn: 1e6, million: 1e6, b: 1e9, bn: 1e9, billion: 1e9 };
+function parseRevenue(text) {
+  const clean = (text || '').replace(/\s+/g, ' ');
+  const amount = '(?:US)?\\$\\s?([\\d.,]+)\\s?(k|thousand|mm|mn|m|million|bn|b|billion)\\b';
+  const patterns = [
+    new RegExp(`(?:annual )?revenue(?: range)?\\s*(?::|of|is|was|at|around|approximately|about|~)?\\s*(?:an estimated |approximately |about |~)?${amount}`, 'i'),
+    new RegExp(`${amount}\\s+(?:in |of )?(?:annual )?(?:revenue|sales|turnover)`, 'i'),
+  ];
+  for (const pattern of patterns) {
+    const match = clean.match(pattern);
+    if (match) {
+      const value = parseFloat(match[1].replace(/,/g, '')) * UNITS[match[2].toLowerCase()];
+      if (value >= 1e5 && value < 1e13) return Math.round(value);
+    }
+  }
+  return null;
+}
+
+// LinkedIn "Company size: 51-200 employees" -> midpoint headcount.
+function parseCompanySize(text) {
+  const match = (text || '').match(/Company size:?\s*([\d,]+)\s*[-–]\s*([\d,]+)\s*employees/i) || (text || '').match(/Company size:?\s*([\d,]+)\+\s*employees/i);
+  if (!match) return null;
+  const low = parseInt(match[1].replace(/,/g, ''), 10);
+  const high = match[2] ? parseInt(match[2].replace(/,/g, ''), 10) : low;
+  return { employees: Math.round((low + high) / 2), range: match[2] ? `${match[1]}–${match[2]}` : `${match[1]}+` };
+}
+
 // Keep descriptions short: up to two sentences / ~300 characters.
 function shorten(text) {
   if (!text) return null;
@@ -74,6 +103,9 @@ function parseTavilyProfile(result) {
     linkedinIndustry: field(text, 'Industry'),
     founded: (field(text, 'Founded') || '').match(/\d{4}/)?.[0] || null,
     description: shorten(field(text, 'Description')),
+    revenue: parseRevenue(text),
+    employees: parseCompanySize(text)?.employees || null,
+    employeesRange: parseCompanySize(text)?.range || null,
   };
 }
 
@@ -86,8 +118,11 @@ function parseLinkedInCompany(result) {
     linkedinUrl: result.url.replace(/^https?:\/\/[a-z]{2}\./, 'https://www.').replace(/\/$/, ''),
     headquarters: field(text, 'Headquarters'),
     linkedinIndustry: field(text, 'Industry'),
-    employees: employees ? parseInt(employees[1].replace(/,/g, ''), 10) : null,
+    employees: employees ? parseInt(employees[1].replace(/,/g, ''), 10) : parseCompanySize(text)?.employees || null,
+    employeesRange: parseCompanySize(text)?.range || null,
+    founded: (field(text, 'Founded') || '').match(/\d{4}/)?.[0] || null,
     description: shorten(field(text, 'Description')),
+    revenue: parseRevenue(text),
   };
 }
 
@@ -104,7 +139,9 @@ function parseGenericLinkedIn(result) {
     name: title || null,
     linkedinUrl: result.url.replace(/^https?:\/\/[a-z]{2}\./, 'https://www.').replace(/[?#].*$/, '').replace(/\/$/, ''),
     description: shorten(description),
-    employees: employees ? parseInt(employees[1].replace(/,/g, ''), 10) : null,
+    employees: employees ? parseInt(employees[1].replace(/,/g, ''), 10) : parseCompanySize(content)?.employees || null,
+    employeesRange: parseCompanySize(content)?.range || null,
+    revenue: parseRevenue(content),
   };
 }
 
@@ -120,6 +157,7 @@ function parseOfficialSite(result) {
     name: (result.title || '').split(/\s+[|\-–:]\s+/)[0].trim() || null,
     website: origin,
     description: shorten(result.content),
+    revenue: parseRevenue(result.content),
   };
 }
 
@@ -154,7 +192,7 @@ async function findCompanyProfile(companyName, hints = {}) {
   const industryWord = hints.industry && INDUSTRY_HINTS[hints.industry] ? hints.industry.toLowerCase() : '';
 
   const { results, provider, errors } = await searchWeb(
-    `"${companyName}" ${industryWord} company official website LinkedIn`,
+    `"${companyName}" ${industryWord} company official website LinkedIn revenue employees`,
     { depth: 'basic', maxResults: 8 }
   );
   // Every provider failed (limits, outage): throw so the caller retries later.
@@ -199,10 +237,12 @@ async function findCompanyProfile(companyName, hints = {}) {
     headquarters: pick('headquarters'),
     linkedinIndustry: pick('linkedinIndustry'),
     employees: pick('employees'),
+    employeesRange: pick('employeesRange'),
     founded: pick('founded'),
+    revenue: pick('revenue'),
   };
   if (!profile.website && !profile.linkedinUrl && !profile.description) return null;
   return { ...profile, source: `Public company profile / LinkedIn (via ${provider})` };
 }
 
-module.exports = { findCompanyProfile };
+module.exports = { findCompanyProfile, parseRevenue, parseCompanySize };
