@@ -148,23 +148,61 @@ async function revealContact(personId, { webhookUrl } = {}) {
   };
 }
 
-/** 1 credit when found: company revenue, headcount and founding year. */
+// Technologies worth calling out because they map to an Amzur service.
+const AMZUR_RELEVANT_TECH =
+  /\b(netsuite|sap|oracle|dynamics|business central|workday|sage|quickbooks|salesforce|hubspot|servicenow|aws|amazon web services|azure|google cloud|gcp|kubernetes|docker|terraform|jenkins|uipath|automation anywhere|blue prism|power automate|mainframe|cobol|as\/?400|snowflake|databricks|power bi|tableau|\.net|java|react|angular|node)\b/i;
+
+const percent = (value) => (typeof value === 'number' ? Math.round(value * 1000) / 10 : null);
+
+/**
+ * 1 credit when found: the company's profile from Apollo: size, growth,
+ * funding, team sizes, technology stack and description.
+ */
 async function enrichCompany(website) {
   const domain = domainOf(website);
   if (!domain) throw new ApolloError('No company website to look up.', 400);
   const data = await apollo('organizations/enrich', { domain }, 'get');
   const org = data.organization;
   if (!org) return null;
+
+  const tech = (org.current_technologies || []).map((t) => ({ name: t.name, category: t.category || 'Other' }));
+  const techNames = tech.length ? tech.map((t) => t.name) : org.technology_names || [];
+  const departments = Object.entries(org.departmental_head_count || {})
+    .filter(([, count]) => typeof count === 'number' && count > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => ({ name: name.replace(/_/g, ' '), count }));
+
   return {
+    id: org.id || null,
     name: org.name || null,
+    description: org.short_description || org.seo_description || null,
+    industry: org.industry || null,
+    keywords: (org.keywords || []).slice(0, 12),
     revenue: org.annual_revenue || null,
     revenuePrinted: org.annual_revenue_printed || null,
     employees: org.estimated_num_employees || null,
+    growth: {
+      sixMonths: percent(org.organization_headcount_six_month_growth),
+      twelveMonths: percent(org.organization_headcount_twelve_month_growth),
+      twentyFourMonths: percent(org.organization_headcount_twenty_four_month_growth),
+    },
+    departments: departments.slice(0, 8),
     founded: org.founded_year ? String(org.founded_year) : null,
-    industry: org.industry || null,
-    linkedinUrl: org.linkedin_url || null,
-    phone: org.primary_phone?.sanitized_number || org.phone || null,
+    address: org.raw_address || [org.street_address, org.city, org.state, org.country].filter(Boolean).join(', ') || null,
     city: [org.city, org.state, org.country].filter(Boolean).join(', ') || null,
+    phone: org.primary_phone?.sanitized_number || org.phone || null,
+    website: org.website_url || null,
+    linkedinUrl: org.linkedin_url || null,
+    twitterUrl: org.twitter_url || null,
+    funding: {
+      total: org.total_funding || null,
+      totalPrinted: org.total_funding_printed || null,
+      latestStage: org.latest_funding_stage || null,
+      latestDate: org.latest_funding_round_date || null,
+    },
+    publicSymbol: org.publicly_traded_symbol ? `${org.publicly_traded_exchange ? `${org.publicly_traded_exchange.toUpperCase()}: ` : ''}${org.publicly_traded_symbol}` : null,
+    techStack: tech.length ? tech : techNames.map((name) => ({ name, category: 'Other' })),
+    relevantTech: [...new Set(techNames.filter((name) => AMZUR_RELEVANT_TECH.test(name)))],
     checkedAt: new Date().toISOString(),
   };
 }

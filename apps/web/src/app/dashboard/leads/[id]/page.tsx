@@ -5,10 +5,11 @@ import useSWR from 'swr';
 import { leadsAPI } from '@/lib/api';
 import { lobBadge, lobLabel } from '@/lib/lobs';
 import { industryBadge, isPriorityIndustry } from '@/lib/industries';
-import { describeSource, hostname, isLinkedInLead } from '@/lib/sources';
+import { describeSource, isLinkedInLead } from '@/lib/sources';
 import { regionLabel } from '@/lib/regions';
 import { buildBrief } from '@/lib/leadBrief';
 import ApolloContacts, { ApolloCompanyButton } from '@/components/ApolloContacts';
+import CompanyIntelligence from '@/components/CompanyIntelligence';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
@@ -402,86 +403,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               </div>
             </section>
 
-            {!fromLinkedIn && (
-              <section className="bg-white border border-gray-200 rounded-lg p-6">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">About {company}</h2>
-                {profile ? (
-                  <>
-                    {profile.description ? (
-                      <p className="text-gray-800 leading-relaxed">{profile.description}</p>
-                    ) : (
-                      <p className="text-gray-500 text-sm">No description available.</p>
-                    )}
-                    <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 mt-4 text-sm">
-                      <div className="flex justify-between sm:justify-start gap-3">
-                        <dt className="text-gray-500 w-24 shrink-0">Website</dt>
-                        <dd>
-                          {officialWebsite ? (
-                            <a href={officialWebsite} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 break-all">
-                              {hostname(officialWebsite)} ↗
-                            </a>
-                          ) : (
-                            <span className="text-gray-400">Not found</span>
-                          )}
-                        </dd>
-                      </div>
-                      <div className="flex justify-between sm:justify-start gap-3">
-                        <dt className="text-gray-500 w-24 shrink-0">LinkedIn</dt>
-                        <dd>
-                          {companyLinkedIn ? (
-                            <a href={companyLinkedIn} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 break-all">
-                              {companyLinkedIn.replace(/^https?:\/\/(www\.)?/, '')} ↗
-                            </a>
-                          ) : (
-                            <span className="text-gray-400">Not found</span>
-                          )}
-                        </dd>
-                      </div>
-                      {profile.headquarters && (
-                        <div className="flex justify-between sm:justify-start gap-3">
-                          <dt className="text-gray-500 w-24 shrink-0">Headquarters</dt>
-                          <dd className="text-gray-900">{profile.headquarters}</dd>
-                        </div>
-                      )}
-                      {profile.linkedinIndustry && (
-                        <div className="flex justify-between sm:justify-start gap-3">
-                          <dt className="text-gray-500 w-24 shrink-0">Sector</dt>
-                          <dd className="text-gray-900">{profile.linkedinIndustry.replace(/\s*Industry codes:.*$/i, '')}</dd>
-                        </div>
-                      )}
-                      {profile.founded && (
-                        <div className="flex justify-between sm:justify-start gap-3">
-                          <dt className="text-gray-500 w-24 shrink-0">Founded</dt>
-                          <dd className="text-gray-900">{profile.founded}</dd>
-                        </div>
-                      )}
-                      {lead.revenue || (profile as any).revenue ? (
-                        <div className="flex justify-between sm:justify-start gap-3">
-                          <dt className="text-gray-500 w-24 shrink-0">Revenue</dt>
-                          <dd className="text-gray-900">
-                            ~${Math.round((lead.revenue || (profile as any).revenue) / 1e6).toLocaleString()}M (public estimate)
-                          </dd>
-                        </div>
-                      ) : null}
-                      {profile.employees ? (
-                        <div className="flex justify-between sm:justify-start gap-3">
-                          <dt className="text-gray-500 w-24 shrink-0">Employees</dt>
-                          <dd className="text-gray-900">~{profile.employees.toLocaleString()} on LinkedIn</dd>
-                        </div>
-                      ) : null}
-                    </dl>
-                    <p className="text-xs text-gray-400 mt-3">From the company&apos;s public LinkedIn / web profile.</p>
-                  </>
-                ) : (
-                  <p className="text-sm text-gray-500">
-                    {signals.companyChecked
-                      ? 'We couldn’t find a reliable public profile for this company.'
-                      : 'Company profile not looked up yet.'}{' '}
-                    Use the LinkedIn and web search buttons above.
-                  </p>
-                )}
-              </section>
-            )}
+            {!fromLinkedIn && <CompanyIntelligence lead={lead} onChange={() => mutate()} />}
 
             <section className="bg-white border border-gray-200 rounded-lg p-6">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Where we found this</h2>

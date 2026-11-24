@@ -7,6 +7,8 @@ const { LEAD_MAX_AGE_DAYS, isRecent } = require('../config/recency');
 const { checkIcp } = require('../lib/icp');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const apollo = require('../lib/apollo');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { searchNews } = require('../lib/freeSources');
 
 const router = Router();
 
@@ -322,6 +324,39 @@ router.post('/:id/company/enrich', authenticateToken, async (req: AuthRequest, r
     res.json({ lead: { ...updated, icp: checkIcp(updated) } });
   } catch (error) {
     apolloFailure(res, error);
+  }
+});
+
+// Free: the company's recent news from Google News (last 90 days), cached on
+// the lead for a day so opening the page repeatedly costs nothing extra.
+const NEWS_CACHE_HOURS = 24;
+router.get('/:id/company/news', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const signals: any = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
+    if (signals.leadType === 'linkedin_post') return res.json({ items: [], skipped: 'Company not identified' });
+    const cached = signals.companyNews;
+    if (cached?.fetchedAt && Date.now() - new Date(cached.fetchedAt).getTime() < NEWS_CACHE_HOURS * 3600000) {
+      return res.json(cached);
+    }
+    const name = lead.companyName.replace(/,?\s+(inc|llc|ltd|corp|corporation|co)\.?$/i, '').trim();
+    const results = await searchNews(`"${name}"`, { days: 90, max: 20 });
+    // Keep headlines that actually name the company, newest first, no duplicates.
+    const key = name.toLowerCase();
+    const seen = new Set<string>();
+    const items = results
+      .filter((item: any) => item.title && item.title.toLowerCase().includes(key))
+      .filter((item: any) => (seen.has(item.title) ? false : (seen.add(item.title), true)))
+      .sort((a: any, b: any) => new Date(b.published_date || 0).getTime() - new Date(a.published_date || 0).getTime())
+      .slice(0, 6)
+      .map((item: any) => ({ title: item.title, url: item.url, publisher: item.publisher, date: item.published_date }));
+    const companyNews = { items, fetchedAt: new Date().toISOString() };
+    await prisma.lead.update({ where: { id: lead.id }, data: { signals: { ...signals, companyNews } } });
+    res.json(companyNews);
+  } catch (error) {
+    console.error('Company news failed:', (error as any)?.message);
+    res.status(502).json({ error: 'Could not load company news right now' });
   }
 });
 

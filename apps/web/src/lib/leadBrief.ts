@@ -397,6 +397,27 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
   if (kind === 'linkedin') angles.push('Be useful first: answer their question with specific options and trade-offs before offering Amzur’s help.');
   if (industry && INDUSTRY_NOTES[industry]) angles.push(INDUSTRY_NOTES[industry].angle);
   if (REGION_NOTES[region]) angles.push(REGION_NOTES[region]);
+  // Company intelligence (Apollo profile, recent news), when it has been looked up.
+  const intel = s.apollo?.company;
+  const relevantTech: string[] = intel?.relevantTech || [];
+  if (relevantTech.length) {
+    angles.push(
+      `Their stack already includes ${relevantTech.slice(0, 4).join(', ')}. Open with Amzur's experience on those platforms (optimization, integration, support) rather than a replacement pitch.`
+    );
+  }
+  const growth12 = intel?.growth?.twelveMonths;
+  if (typeof growth12 === 'number' && growth12 >= 10) {
+    angles.push(`Headcount grew ${growth12}% in 12 months: systems and teams are likely stretched, so speed and extra capacity resonate.`);
+  } else if (typeof growth12 === 'number' && growth12 <= -5) {
+    angles.push(`Headcount fell ${Math.abs(growth12)}% in 12 months: lead with cost efficiency and automation rather than headcount-heavy delivery.`);
+  }
+  if (intel?.funding?.latestDate && Date.now() - new Date(intel.funding.latestDate).getTime() < 365 * 86400000) {
+    angles.push(`They raised ${intel.funding.latestStage || 'funding'} in the last year: there is budget, and investors will expect delivery to scale.`);
+  }
+  const headline = (s.companyNews?.items || [])[0];
+  if (headline?.title) {
+    angles.push(`Recent news to reference in outreach: “${clip(headline.title, 120)}”.`);
+  }
   if (size === 'small' || size === 'mid-sized') angles.push(`As a ${size} company, they benefit from a team that brings its own delivery lead and QA, not just individual contractors.`);
 
   // ---- steps ----

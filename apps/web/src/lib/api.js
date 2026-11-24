@@ -116,6 +116,8 @@ export const apolloAPI = {
   revealContact: async (leadId, personId, type = 'email') =>
     fetchAPI(`/api/leads/${leadId}/contacts/reveal`, { method: 'POST', body: JSON.stringify({ personId, type }) }),
   enrichCompany: async (leadId) => fetchAPI(`/api/leads/${leadId}/company/enrich`, { method: 'POST' }),
+  // Free: recent news about the company (cached for a day).
+  companyNews: async (leadId) => fetchAPI(`/api/leads/${leadId}/company/news`),
 };
 
 // Discovery Scan API
