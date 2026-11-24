@@ -55,6 +55,8 @@ const ALL_ICP_TITLES = ['CTO', 'Chief Technology Officer', 'COO', 'Chief Operati
 // How well a title fits the ICP roles: higher is better.
 function icpRank(title) {
   const t = (title || '').toLowerCase();
+  // Not a current decision maker there.
+  if (/\b(former|ex-|retired|independent|freelance|advisor|adviser|consultant|board member|investor)\b/.test(t)) return 0;
   // Marketing, sales, HR, finance and legal leaders aren't technology / operations buyers.
   if (/\b(marketing|sales|revenue|brand|communications|talent|people|hr|human resources|finance|legal|policy|regulatory|counsel)\b/.test(t)) return /\b(ceo|founder)\b|(?<!vice )\bpresident\b/.test(t) ? 1 : 0;
   if (/\b(cto|cio|coo|chief (technology|technical|information|operating|operations|digital|transformation) officer)\b/.test(t)) return 4;
@@ -67,6 +69,58 @@ function icpRank(title) {
 
 const domainOf = (website) =>
   (website || '').replace(/^https?:\/\/(www\.)?/, '').replace(/[/?#].*$/, '').toLowerCase() || null;
+
+// Company names compared loosely: case, accents, punctuation and legal
+// suffixes ignored ("Azərbaycan Dəmir Yolları - ADY / Azerbaijan Railways"
+// matches "Azerbaijan Railways").
+const normalizeName = (name) =>
+  (name || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\b(inc|llc|ltd|limited|corp|corporation|co|company|group|holdings|plc|gmbh|pvt|private)\b\.?/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+const nameMatches = (orgName, companyName) => {
+  const a = normalizeName(orgName);
+  const b = normalizeName(companyName);
+  // Whole words only: "Capco" must not match "Capcom".
+  return !!a && !!b && (a === b || ` ${a} `.includes(` ${b} `) || (` ${b} `.includes(` ${a} `) && a.length >= 4));
+};
+
+// The company's name as Apollo would know it: no "UK's" prefix, no quoted
+// headline fragment ("‘Absurd ambition’: Pulumi" -> "Pulumi").
+const cleanCompanyName = (name) =>
+  (name || '')
+    .replace(/^.*?[:：]\s+/, '')
+    .replace(/^(UK|US|U\.S\.|UAE|India|Indian|Dutch|German|French|Irish|British|European)['’]s\s+/i, '')
+    .replace(/^[‘'"“]+|[’'"”]+$/g, '')
+    .trim();
+
+/**
+ * Free: the company's real website, found without spending credits.
+ * Candidate domains come from a public company-name lookup; each is kept only
+ * if Apollo lists people at that domain working for a company of that name.
+ */
+async function resolveDomain(companyName) {
+  const name = cleanCompanyName(companyName);
+  let suggestions = [];
+  try {
+    const { data } = await axios.get('https://autocomplete.clearbit.com/v1/companies/suggest', {
+      params: { query: name },
+      timeout: 6000,
+    });
+    suggestions = Array.isArray(data) ? data : [];
+  } catch {
+    return null;
+  }
+  const candidates = suggestions.filter((s) => s.domain && nameMatches(s.name, name)).slice(0, 3);
+  for (const candidate of candidates) {
+    const check = await apollo('mixed_people/api_search', { q_organization_domains_list: [candidate.domain], per_page: 3 }).catch(() => null);
+    if ((check?.people || []).some((p) => nameMatches(p.organization?.name, name))) return candidate.domain;
+  }
+  return null;
+}
 
 const candidateFrom = (person) => ({
   id: person.id,
@@ -81,31 +135,46 @@ const candidateFrom = (person) => ({
 });
 
 /**
- * Free: senior people at the company, ICP roles first.
- * @param {{ website?: string, companyName: string, lob?: string }} lead
+ * Free: senior people at the company, ICP roles first. Searches by the
+ * company's verified domain when known, otherwise by its name (only people
+ * whose employer name matches are kept). Also returns the company's verified
+ * domain when it can be found for free.
+ * @param {{ website?: string|null, companyName: string, lob?: string }} lead  website must be verified, never guessed
  */
 async function findDecisionMakers({ website, companyName, lob }) {
-  const domain = domainOf(website);
-  const where = domain ? { q_organization_domains_list: [domain] } : { q_keywords: companyName };
+  const name = cleanCompanyName(companyName);
+  let domain = domainOf(website);
   const titles = [...new Set([...(ICP_TITLES[lob] || []), ...ALL_ICP_TITLES])];
+  const seniorities = ['c_suite', 'vp', 'head', 'founder', 'owner'];
 
-  // ICP titles first; if the company uses other titles, fall back to seniority.
-  const byTitle = await apollo('mixed_people/api_search', { ...where, person_titles: titles, per_page: 25 });
-  let people = byTitle.people || [];
-  if (people.length < 3) {
-    const bySeniority = await apollo('mixed_people/api_search', {
-      ...where,
-      person_seniorities: ['c_suite', 'vp', 'head', 'founder', 'owner'],
-      per_page: 25,
-    });
-    const seen = new Set(people.map((p) => p.id));
-    people = [...people, ...(bySeniority.people || []).filter((p) => !seen.has(p.id))];
+  const search = async (where, matchName) => {
+    const byTitle = await apollo('mixed_people/api_search', { ...where, person_titles: titles, per_page: 25 });
+    let people = byTitle.people || [];
+    if (people.length < 3) {
+      const bySeniority = await apollo('mixed_people/api_search', { ...where, person_seniorities: seniorities, per_page: 25 });
+      const seen = new Set(people.map((p) => p.id));
+      people = [...people, ...(bySeniority.people || []).filter((p) => !seen.has(p.id))];
+    }
+    return matchName ? people.filter((p) => nameMatches(p.organization?.name, name)) : people;
+  };
+
+  let people = [];
+  let matchedBy = null;
+  if (domain) {
+    people = await search({ q_organization_domains_list: [domain] }, false);
+    matchedBy = `domain ${domain}`;
   }
+  if (!people.length) {
+    people = await search({ q_organization_name: name }, true);
+    matchedBy = `company name "${name}"`;
+  }
+  if (!domain) domain = await resolveDomain(name);
+
   const ranked = people.map(candidateFrom).sort((a, b) => b.icpRank - a.icpRank);
   // Leave out marketing / HR / finance titles when there are enough real decision makers.
   const relevant = ranked.filter((c) => c.icpRank > 0);
   const candidates = (relevant.length >= 3 ? relevant : ranked).slice(0, 10);
-  return { candidates, matchedBy: domain ? `domain ${domain}` : `company name "${companyName}"` };
+  return { candidates, matchedBy, domain };
 }
 
 // Phone numbers from an Apollo person record, best first (mobile / direct before others).
@@ -143,6 +212,7 @@ async function revealContact(personId, { webhookUrl } = {}) {
     phoneStatus: webhookUrl ? (phones.length ? 'found' : 'pending') : undefined,
     location: [person.city, person.state, person.country].filter(Boolean).join(', ') || null,
     organization: person.organization?.name || null,
+    organizationDomain: person.organization?.primary_domain || domainOf(person.organization?.website_url) || null,
     icpRank: icpRank(person.title),
     revealedAt: new Date().toISOString(),
   };

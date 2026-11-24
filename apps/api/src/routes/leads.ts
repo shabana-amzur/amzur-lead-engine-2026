@@ -183,6 +183,26 @@ const apolloSignals = (lead: any) => {
   return { signals, saved: signals.apollo || {} };
 };
 
+// The company's website only when it was actually found (profile lookup,
+// Apollo, or a free check), never lead.website, which is often a guess built
+// from the company name.
+const verifiedWebsite = (signals: any): string | null => signals.company?.website || signals.apollo?.company?.website || null;
+
+// Save a newly confirmed domain as the company's website (and fix the guessed
+// general inbox to match).
+function withVerifiedDomain(lead: any, signals: any, domain: string | null | undefined, source: string) {
+  if (!domain || verifiedWebsite(signals)) return { signals, data: {} as any };
+  const website = `https://${domain}`;
+  const nextSignals = { ...signals, company: { ...(signals.company || {}), website, websiteSource: source } };
+  const data: any = { website };
+  if (!lead.outreachEmail || /^contact@/i.test(lead.outreachEmail)) data.outreachEmail = `contact@${domain}`;
+  return { signals: nextSignals, data };
+}
+
+// Bumped when the contact search changes, so leads searched the old way
+// (e.g. on a guessed domain that found nobody) search again.
+const CONTACT_SEARCH_VERSION = 2;
+
 const apolloFailure = (res: Response, error: any) => {
   const status = error?.status && error.status >= 400 && error.status < 600 ? error.status : 500;
   console.error('Apollo error:', error?.message);
@@ -191,7 +211,7 @@ const apolloFailure = (res: Response, error: any) => {
 
 // Whether Apollo is set up on this API.
 router.get('/apollo/status', authenticateToken, (_req: AuthRequest, res: Response) => {
-  res.json({ configured: apollo.isConfigured() });
+  res.json({ configured: apollo.isConfigured(), contactSearchVersion: CONTACT_SEARCH_VERSION });
 });
 
 // Free: find ICP decision makers at the lead's company.
@@ -200,10 +220,16 @@ router.post('/:id/contacts/search', authenticateToken, async (req: AuthRequest, 
     const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
     const { signals, saved } = apolloSignals(lead);
-    const website = signals.company?.website || lead.website;
-    const result = await apollo.findDecisionMakers({ website, companyName: lead.companyName, lob: lead.lob });
-    const nextApollo = { ...saved, candidates: result.candidates, matchedBy: result.matchedBy, searchedAt: new Date().toISOString() };
-    const updated = await prisma.lead.update({ where: { id: lead.id }, data: { signals: { ...signals, apollo: nextApollo } } });
+    const result = await apollo.findDecisionMakers({ website: verifiedWebsite(signals), companyName: lead.companyName, lob: lead.lob });
+    const nextApollo = {
+      ...saved,
+      candidates: result.candidates,
+      matchedBy: result.matchedBy,
+      searchedAt: new Date().toISOString(),
+      searchVersion: CONTACT_SEARCH_VERSION,
+    };
+    const verified = withVerifiedDomain(lead, { ...signals, apollo: nextApollo }, result.domain, 'Confirmed through Apollo');
+    const updated = await prisma.lead.update({ where: { id: lead.id }, data: { ...verified.data, signals: verified.signals } });
     res.json({ apollo: (updated.signals as any).apollo });
   } catch (error) {
     apolloFailure(res, error);
@@ -253,7 +279,9 @@ router.post('/:id/contacts/reveal', authenticateToken, async (req: AuthRequest, 
     if (!contact) return res.status(404).json({ error: 'Apollo could not find this person (no credit used).' });
     const merged = existing ? { ...existing, ...contact, email: contact.email || existing.email } : contact;
     const nextApollo = { ...saved, contacts: existing ? contacts.map((c) => (c.id === personId ? merged : c)) : [...contacts, merged] };
-    const data: any = { signals: { ...signals, apollo: nextApollo } };
+    // A revealed person's employer domain confirms the company's website.
+    const verified = withVerifiedDomain(lead, { ...signals, apollo: nextApollo }, contact.organizationDomain, 'From an Apollo contact');
+    const data: any = { ...verified.data, signals: verified.signals };
     // The best revealed ICP contact becomes the lead's outreach email.
     const best = [...nextApollo.contacts].filter((c) => c.email).sort((a, b) => b.icpRank - a.icpRank)[0];
     if (best) data.outreachEmail = best.email;
@@ -305,7 +333,11 @@ router.post('/:id/company/enrich', authenticateToken, async (req: AuthRequest, r
     const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
     const { signals, saved } = apolloSignals(lead);
-    const company = await apollo.enrichCompany(signals.company?.website || lead.website);
+    const website = verifiedWebsite(signals);
+    if (!website) {
+      return res.status(400).json({ error: 'The company’s website isn’t confirmed yet, so Apollo can’t look it up (no credit used).' });
+    }
+    const company = await apollo.enrichCompany(website);
     if (!company) return res.status(404).json({ error: 'Apollo has no record of this company (no credit used).' });
     const data: any = {
       signals: {

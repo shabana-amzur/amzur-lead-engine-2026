@@ -72,14 +72,16 @@ export default function ApolloContacts({ lead, onChange }: { lead: any; onChange
     }
   };
 
-  // Names and titles are free: look them up as soon as the page opens.
+  // Names and titles are free: look them up as soon as the page opens, and
+  // again when an older search (e.g. on a guessed website) found nobody.
+  const outdated = !!saved.searchedAt && !candidates.length && (saved.searchVersion || 1) < (status?.contactSearchVersion || 1);
   useEffect(() => {
-    if (status?.configured && !saved.searchedAt && !searched.current) {
+    if (status?.configured && (!saved.searchedAt || outdated) && !searched.current) {
       searched.current = true;
       run('search', () => apolloAPI.findContacts(lead.id));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status?.configured, saved.searchedAt, lead.id]);
+  }, [status?.configured, saved.searchedAt, outdated, lead.id]);
 
   // Phone numbers arrive from Apollo a little after the reveal: refresh until they do (up to ~3 minutes).
   const waitingForPhone = contacts.some(
@@ -114,7 +116,7 @@ export default function ApolloContacts({ lead, onChange }: { lead: any; onChange
 
   return (
     <div className="space-y-3">
-      {!saved.searchedAt && busy === 'search' && <p className="text-sm text-gray-500">Finding decision makers in Apollo…</p>}
+      {busy === 'search' && !candidates.length && <p className="text-sm text-gray-500">Finding decision makers in Apollo…</p>}
 
       {people.length > 0 && (
         <>
@@ -226,7 +228,7 @@ export default function ApolloContacts({ lead, onChange }: { lead: any; onChange
         </>
       )}
 
-      {saved.searchedAt && people.length === 0 && (
+      {saved.searchedAt && people.length === 0 && busy !== 'search' && (
         <p className="text-xs text-gray-500">No senior contacts found in Apollo{saved.matchedBy ? ` by ${saved.matchedBy}` : ''}.</p>
       )}
 
@@ -251,7 +253,8 @@ export function ApolloCompanyButton({ lead, onChange }: { lead: any; onChange: (
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const checked = lead.signals?.apollo?.company;
-  if (!status?.configured) return null;
+  // Only a confirmed website: the lead's own website field may be a guess.
+  if (!status?.configured || (!checked && !lead.signals?.company?.website)) return null;
   return (
     <div className="mt-3 pt-3 border-t border-gray-100">
       {checked ? (

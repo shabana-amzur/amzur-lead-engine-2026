@@ -89,7 +89,7 @@ export default function CompanyIntelligence({ lead, onChange }: { lead: any; onC
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Company intelligence · {company}</h2>
         {intel?.checkedAt ? (
           <span className="text-xs text-gray-400">Apollo profile from {formatDate(intel.checkedAt)}</span>
-        ) : status?.configured && website ? (
+        ) : status?.configured && profile.website ? (
           <button
             type="button"
             onClick={enrich}
@@ -208,7 +208,13 @@ export default function CompanyIntelligence({ lead, onChange }: { lead: any; onC
         </div>
       )}
 
-      {!intel && status?.configured && website && (
+      {!intel && status?.configured && !profile.website && (
+        <p className="mt-4 text-xs text-gray-500">
+          The full Apollo profile becomes available once the company&apos;s website is confirmed (this happens automatically when its
+          decision makers are found).
+        </p>
+      )}
+      {!intel && status?.configured && profile.website && (
         <p className="mt-4 text-xs text-gray-500">
           The Apollo profile adds revenue, headcount growth, team sizes, funding and the company&apos;s technology stack.
         </p>
