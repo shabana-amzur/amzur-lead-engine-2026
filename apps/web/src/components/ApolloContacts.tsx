@@ -31,6 +31,15 @@ const ICP_BADGE: Record<number, [string, string]> = {
   1: ['Senior leader', 'bg-gray-100 text-gray-600'],
 };
 
+// LinkedIn people search for someone whose profile isn't revealed yet. Apollo
+// hides the last name until a reveal, so search by first name, title and company.
+function linkedInSearch(candidate: Candidate, company: string) {
+  const firstName = (candidate.name || '').split(' ')[0];
+  const title = (candidate.title || '').replace(/[,&].*$/, '').trim();
+  const keywords = [firstName, title, company].filter(Boolean).join(' ');
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(keywords)}`;
+}
+
 const PHONE_TYPES: Record<string, string> = { mobile: 'mobile', direct_dial: 'direct', work_direct: 'direct', work: 'work', work_hq: 'office' };
 
 export default function ApolloContacts({ lead, onChange }: { lead: any; onChange: () => void }) {
@@ -121,7 +130,30 @@ export default function ApolloContacts({ lead, onChange }: { lead: any; onChange
                 <li key={candidate.id} className={`rounded-md border p-3 text-sm ${contact ? 'border-emerald-200 bg-emerald-50/40' : 'border-gray-200'}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="font-medium text-gray-900">{contact?.name || candidate.name}</div>
+                      <div className="font-medium text-gray-900 flex flex-wrap items-center gap-x-2">
+                        {contact?.name || candidate.name}
+                        {contact?.linkedinUrl ? (
+                          <a
+                            href={contact.linkedinUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] font-normal text-blue-600 hover:text-blue-800"
+                            title="Their LinkedIn profile"
+                          >
+                            in Profile ↗
+                          </a>
+                        ) : (
+                          <a
+                            href={linkedInSearch(candidate, lead.companyName)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] font-normal text-blue-600 hover:text-blue-800"
+                            title="Search LinkedIn for this person (free). Reveal their email to get the exact profile."
+                          >
+                            in Find on LinkedIn ↗
+                          </a>
+                        )}
+                      </div>
                       <div className="text-xs text-gray-600">{contact?.title || candidate.title || 'Title unknown'}</div>
                     </div>
                     {badge && <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${badge[1]}`}>{badge[0]}</span>}
@@ -156,14 +188,6 @@ export default function ApolloContacts({ lead, onChange }: { lead: any; onChange
                         <div className="text-amber-700">{waitingForPhone ? 'Looking up phone numbers… (can take a minute)' : 'Phone lookup still pending in Apollo'}</div>
                       )}
                       {contact.phoneStatus === 'none' && <div className="text-gray-500">No direct phone number found</div>}
-                      {contact.linkedinUrl && (
-                        <div>
-                          💼{' '}
-                          <a href={contact.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
-                            LinkedIn profile ↗
-                          </a>
-                        </div>
-                      )}
                       {contact.location && <div className="text-gray-500">📍 {contact.location}</div>}
                     </div>
                   )}
