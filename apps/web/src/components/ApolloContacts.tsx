@@ -223,11 +223,21 @@ export default function ApolloContacts({ lead, onChange, brief }: { lead: any; o
     <div className="space-y-3">
       {busy === 'search' && !candidates.length && <p className="text-sm text-gray-500">Finding decision makers in Apollo…</p>}
 
+      {!saved.searchedAt && error && busy !== 'search' && (
+        <button
+          type="button"
+          onClick={() => run('search', () => apolloAPI.findContacts(lead.id))}
+          className="w-full text-sm px-3 py-2 rounded-md border border-blue-300 text-blue-700 hover:bg-blue-50"
+        >
+          Try the Apollo search again (free)
+        </button>
+      )}
+
       {people.length > 0 && (
         <>
           <p className="text-xs text-gray-500">
             {people.length} decision maker{people.length === 1 ? '' : 's'} in Apollo{saved.matchedBy ? ` (by ${saved.matchedBy})` : ''}. Names and
-            titles are free; revealing contact details uses credits.
+            titles are free; Apollo hides last names, emails and phones until you reveal a person, which uses credits.
           </p>
           <ul className="space-y-2.5">
             {people.map(({ candidate, contact }) => {

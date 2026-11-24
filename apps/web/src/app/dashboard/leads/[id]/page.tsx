@@ -11,7 +11,7 @@ import { buildBrief, buildTimeline } from '@/lib/leadBrief';
 import { matchCaseStudies } from '@/lib/caseStudies';
 import LeadActionBar from '@/components/LeadActionBar';
 import RfpPanel from '@/components/RfpPanel';
-import { ActivityLog, CaseStudyMatch, OutreachSequence, WhyNowTimeline } from '@/components/LeadPanels';
+import { CaseStudyMatch, OutreachSequence, WhyNowTimeline } from '@/components/LeadPanels';
 import ApolloContacts, { ApolloCompanyButton } from '@/components/ApolloContacts';
 import CompanyIntelligence from '@/components/CompanyIntelligence';
 import { useRouter } from 'next/navigation';
@@ -661,8 +661,6 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 </p>
               </section>
             )}
-
-            <ActivityLog lead={lead} onChange={() => mutate()} />
 
             <section className="bg-white border border-gray-200 rounded-lg p-5">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Discovery details</h2>

@@ -18,13 +18,16 @@ function withChecks(lead: any) {
   return { ...lead, icp, leadScore: score.score, scoreBreakdown: score.breakdown };
 }
 
+// Apollo credits are spent only when someone clicks Reveal (email / phone)
+// or Get full profile and confirms; nothing else on the lead page costs credits.
+
 // Workflow stages a lead moves through.
 const STATUSES = ['new', 'contacted', 'replied', 'meeting', 'won', 'lost', 'not_relevant'];
 
 // Append to the lead's activity log (newest last, capped).
 function logActivity(signals: any, req: AuthRequest, type: string, detail: string) {
   const activity = Array.isArray(signals.activity) ? signals.activity : [];
-  return [...activity, { type, detail, by: req.user?.email || 'system', at: new Date().toISOString() }].slice(-200);
+  return [...activity, { type, detail, by: req.user?.email || 'Lead Engine user', at: new Date().toISOString() }].slice(-200);
 }
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { searchNews } = require('../lib/freeSources');
@@ -240,7 +243,7 @@ router.get('/apollo/status', authenticateToken, (_req: AuthRequest, res: Respons
 });
 
 // Free: find ICP decision makers at the lead's company.
-router.post('/:id/contacts/search', authenticateToken, async (req: AuthRequest, res: Response) => {
+router.post('/:id/contacts/search', async (req: AuthRequest, res: Response) => {
   try {
     const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
@@ -279,7 +282,7 @@ function publicApiUrl(req: AuthRequest): string | null {
 // Reveal one person. type 'email': 1 credit when found. type 'phone': the
 // email reveal plus phone numbers (extra credits when found), which Apollo
 // delivers to /api/leads/apollo/phone-webhook a few seconds later.
-router.post('/:id/contacts/reveal', authenticateToken, async (req: AuthRequest, res: Response) => {
+router.post('/:id/contacts/reveal', async (req: AuthRequest, res: Response) => {
   try {
     const { personId, type = 'email' } = req.body || {};
     if (!/^[a-f0-9]{24}$/.test(personId || '')) return res.status(400).json({ error: 'personId is required' });
@@ -354,7 +357,7 @@ router.post('/apollo/phone-webhook', async (req: any, res: Response) => {
 });
 
 // 1 credit: company revenue, headcount and founding year for the ICP check.
-router.post('/:id/company/enrich', authenticateToken, async (req: AuthRequest, res: Response) => {
+router.post('/:id/company/enrich', async (req: AuthRequest, res: Response) => {
   try {
     const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
@@ -422,7 +425,7 @@ router.get('/:id/company/news', authenticateToken, async (req: AuthRequest, res:
 // ---- workflow: status, owner, next action, notes, activity ----
 
 // Update the lead's workflow. Every change is written to the activity log.
-router.patch('/:id/workflow', authenticateToken, async (req: AuthRequest, res: Response) => {
+router.patch('/:id/workflow', async (req: AuthRequest, res: Response) => {
   try {
     const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
@@ -493,7 +496,7 @@ router.get('/apollo/sequences', authenticateToken, async (_req: AuthRequest, res
 
 // Add a revealed contact to an Apollo sequence. Apollo then sends that
 // sequence's emails from the chosen mailbox, so the page confirms first.
-router.post('/:id/contacts/sequence', authenticateToken, async (req: AuthRequest, res: Response) => {
+router.post('/:id/contacts/sequence', async (req: AuthRequest, res: Response) => {
   try {
     const { personId, sequenceId, sequenceName, mailboxId } = req.body || {};
     if (!personId || !sequenceId || !mailboxId) return res.status(400).json({ error: 'personId, sequenceId and mailboxId are required' });
