@@ -7,11 +7,15 @@
 //   ICP                  up to 25  match 25, unverified 10
 //   Fit with Amzur       up to 15  5 per Amzur service area named in the need
 //   Recency              up to 15  15 when posted today, 0 at 20 days
-//   Priority industry        5     Healthcare or Energy
+//   Priority industry        5     priority industries in config/industries.json
+//                                  (Healthcare, Energy, Retail, F&B manufacturing)
 //   Target region            5     USA, UAE, Europe or India confirmed
 //   Contact found            5     a decision maker's email revealed
 // CommonJS so scripts can require it too.
 const { LEAD_MAX_AGE_DAYS } = require('../config/recency');
+const industryConfig = require('../config/industries.json');
+
+const PRIORITY_INDUSTRIES = new Set(industryConfig.industries.filter((i) => i.priority).map((i) => i.name));
 
 const SERVICE_AREAS = [
   ['ERP / NetSuite', /\b(netsuite|erp|sap|s\/4 ?hana|oracle|dynamics 365|workday|business central)\b/i],
@@ -72,7 +76,7 @@ function scoreLead(lead, icp) {
     max: 15,
   });
 
-  const priority = lead.industry === 'Healthcare' || lead.industry === 'Energy';
+  const priority = PRIORITY_INDUSTRIES.has(lead.industry);
   breakdown.push({ label: priority ? `${lead.industry}: priority industry` : 'Not a priority industry', points: priority ? 5 : 0, max: 5 });
 
   const region = signals.geography;

@@ -97,13 +97,42 @@ const cleanCompanyName = (name) =>
     .replace(/^[‘'"“]+|[’'"”]+$/g, '')
     .trim();
 
+// Sites that are never a company's own website.
+const NOT_COMPANY_SITE =
+  /(linkedin|greenhouse|lever\.co|workday|indeed|glassdoor|google|bing|facebook|twitter|x\.com|youtube|instagram|wikipedia|crunchbase|apollo\.io|zoominfo|prnewswire|businesswire|globenewswire|news|yahoo|reuters|bloomberg|forbes|medium|github|tavily|serper)/i;
+
+/**
+ * Websites a lead's own text states, e.g. a LinkedIn "About us" that says
+ * "Website: https://noctuatech.com", or a job post's company link.
+ */
+function domainsStatedIn(text) {
+  const found = [];
+  const add = (raw) => {
+    const domain = domainOf(raw.startsWith('http') ? raw : `https://${raw}`);
+    if (domain && /\.[a-z]{2,}$/.test(domain) && !NOT_COMPANY_SITE.test(domain) && !found.includes(domain)) found.push(domain);
+  };
+  for (const m of (text || '').matchAll(/\bwebsite\s*[:\-]?\s*((?:https?:\/\/)?(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+)/gi)) add(m[1]);
+  for (const m of (text || '').matchAll(/https?:\/\/(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi)) add(m[0]);
+  return found.slice(0, 3);
+}
+
+// Free check: Apollo lists people at this domain working for a company of this name.
+async function domainBelongsTo(domain, name) {
+  const check = await apollo('mixed_people/api_search', { q_organization_domains_list: [domain], per_page: 3 }).catch(() => null);
+  return (check?.people || []).some((p) => nameMatches(p.organization?.name, name));
+}
+
 /**
  * Free: the company's real website, found without spending credits.
- * Candidate domains come from a public company-name lookup; each is kept only
- * if Apollo lists people at that domain working for a company of that name.
+ * Candidates are websites the lead's own text states (first), then domains
+ * from a public company-name lookup; each is kept only if it passes the free
+ * Apollo check above.
  */
-async function resolveDomain(companyName) {
+async function resolveDomain(companyName, statedDomains = []) {
   const name = cleanCompanyName(companyName);
+  for (const domain of statedDomains) {
+    if (await domainBelongsTo(domain, name)) return domain;
+  }
   let suggestions = [];
   try {
     const { data } = await axios.get('https://autocomplete.clearbit.com/v1/companies/suggest', {
@@ -114,10 +143,9 @@ async function resolveDomain(companyName) {
   } catch {
     return null;
   }
-  const candidates = suggestions.filter((s) => s.domain && nameMatches(s.name, name)).slice(0, 3);
+  const candidates = suggestions.filter((s) => s.domain && nameMatches(s.name, name) && !statedDomains.includes(s.domain)).slice(0, 3);
   for (const candidate of candidates) {
-    const check = await apollo('mixed_people/api_search', { q_organization_domains_list: [candidate.domain], per_page: 3 }).catch(() => null);
-    if ((check?.people || []).some((p) => nameMatches(p.organization?.name, name))) return candidate.domain;
+    if (await domainBelongsTo(candidate.domain, name)) return candidate.domain;
   }
   return null;
 }
@@ -141,7 +169,7 @@ const candidateFrom = (person) => ({
  * domain when it can be found for free.
  * @param {{ website?: string|null, companyName: string, lob?: string }} lead  website must be verified, never guessed
  */
-async function findDecisionMakers({ website, companyName, lob }) {
+async function findDecisionMakers({ website, companyName, lob, statedText = '' }) {
   const name = cleanCompanyName(companyName);
   let domain = domainOf(website);
   const titles = [...new Set([...(ICP_TITLES[lob] || []), ...ALL_ICP_TITLES])];
@@ -168,7 +196,7 @@ async function findDecisionMakers({ website, companyName, lob }) {
     people = await search({ q_organization_name: name }, true);
     matchedBy = `company name "${name}"`;
   }
-  if (!domain) domain = await resolveDomain(name);
+  if (!domain) domain = await resolveDomain(name, domainsStatedIn(statedText));
 
   const ranked = people.map(candidateFrom).sort((a, b) => b.icpRank - a.icpRank);
   // Leave out marketing / HR / finance titles when there are enough real decision makers.
@@ -191,8 +219,9 @@ function phonesFrom(person) {
  * Apollo for their phone numbers (extra credits when found); Apollo sends
  * those to the webhook a little later.
  */
-async function revealContact(personId, { webhookUrl } = {}) {
-  const body = { id: personId, reveal_personal_emails: false };
+async function revealContact(personId, { webhookUrl, linkedinUrl } = {}) {
+  // By Apollo id, or by LinkedIn profile URL (e.g. the author of a LinkedIn post).
+  const body = linkedinUrl ? { linkedin_url: linkedinUrl, reveal_personal_emails: false } : { id: personId, reveal_personal_emails: false };
   if (webhookUrl) Object.assign(body, { reveal_phone_number: true, webhook_url: webhookUrl });
   const data = await apollo('people/match', body);
   const person = data.person;
@@ -322,8 +351,13 @@ async function addContactToSequence({ contact, companyName, sequenceId, mailboxI
   return contactId;
 }
 
+/** 1 credit when found: a person looked up by their LinkedIn profile URL. */
+const revealByLinkedIn = (linkedinUrl, options = {}) =>
+  revealContact(null, { ...options, linkedinUrl: String(linkedinUrl).replace(/^https?:\/\/[a-z]{2,3}\.linkedin\.com/i, 'https://www.linkedin.com').replace(/\/$/, '') });
+
 module.exports = {
   isConfigured,
+  revealByLinkedIn,
   findDecisionMakers,
   revealContact,
   enrichCompany,

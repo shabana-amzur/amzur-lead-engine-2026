@@ -6,10 +6,12 @@ import industryConfig from '../config/industries.json';
 import { findPublishedDate } from '../lib/publishedDate';
 import { findCompanyProfile } from '../lib/companyProfile';
 import { classifyLinkedInPost } from '../lib/linkedinFilters';
+import { fetchLinkedInPost, requirementFromPost } from '../lib/linkedinPost';
 import { findRequirementDetails } from '../lib/requirementDetails';
 import { searchWeb } from '../lib/searchProviders';
 import { searchNews } from '../lib/freeSources';
-import { LEAD_MAX_AGE_DAYS, isRecent } from '../config/recency';
+import { fetchContractsFinder, fetchTed } from '../lib/tenderFeeds';
+import { LEAD_MAX_AGE_DAYS, LEAD_ARCHIVE_DAYS, isRecent } from '../config/recency';
 import { classifyGeography, leadGeography } from '../lib/geography';
 import { isJobOpen, jobApiUrl } from '../lib/jobStatus';
 import { classifyVendorIntent, headlineShowsVendorChosen } from '../lib/vendorIntent';
@@ -44,6 +46,9 @@ function regionalNewsSearches(region, edition, queries) {
 
 // The open-call phrases every RFP search is combined with.
 const OPEN_CALL_TERMS = '(RFP OR RFQ OR RFI OR tender OR "request for proposals" OR "seeks proposals" OR "invites bids")';
+
+// Words that mark a LinkedIn post as not a buying request.
+const LINKEDIN_EXCLUDE = ' -hiring -jobs -"we are hiring" -"we\'re hiring" -webinar -"register now" -"excited to announce" -"proud to announce" -"we help"';
 
 const SEARCHES = [
   // ---- Job postings (paid web search): hiring for the skills Amzur provides ----
@@ -97,6 +102,18 @@ const SEARCHES = [
     requireIndustry: 'Energy',
     intent: 'Energy company hiring for technology',
   },
+  {
+    query: 'site:greenhouse.io OR site:lever.co retail OR retailer OR "e-commerce" OR omnichannel "NetSuite" OR "Shopify" OR "ERP" OR "Software Engineer" OR "Data Engineer"',
+    lob: 'auto',
+    requireIndustry: 'Retail & Consumer',
+    intent: 'Retailer hiring for technology',
+  },
+  {
+    query: 'site:greenhouse.io OR site:lever.co "food manufacturing" OR "food and beverage" OR beverage OR dairy OR bakery "ERP" OR "NetSuite" OR "SAP" OR "Automation Engineer" OR "Software Engineer"',
+    lob: 'auto',
+    requireIndustry: 'Food & Beverage Manufacturing',
+    intent: 'F&B manufacturer hiring for technology',
+  },
   // ---- Open RFPs / RFQs / RFIs on the web (paid web search) ----
   {
     query: '"request for proposals" OR RFP OR RFQ ERP OR NetSuite OR "Dynamics 365" OR SAP implementation 2026 proposals due -awarded',
@@ -127,50 +144,92 @@ const SEARCHES = [
     lob: 'auto',
     intent: 'Open RFP for automation / AI / data',
   },
-  // LinkedIn posts where someone publicly asks for a provider. Only public,
-  // search-indexed posts are found (no LinkedIn login or scraping).
-  // 'basic' depth costs half the Tavily credits of 'advanced'.
+  // LinkedIn posts where someone has a requirement and asks for a provider:
+  // buying language ("can anyone recommend", "looking for a vendor", "looking
+  // for a team to build", "seeking proposals") together with an Amzur service,
+  // excluding job ads, events, announcements and vendors talking about
+  // themselves. Only public, search-indexed posts are found (no LinkedIn login).
+  // Run on Google (Serper) first, which honours the quotes, ORs and exclusions;
+  // every post is still checked on its full text before it becomes a lead.
   {
     kind: 'linkedin',
     depth: 'basic',
-    query: 'site:linkedin.com/posts "seeking recommendations" OR "looking for recommendations" OR "can anyone recommend" NetSuite OR ERP partner OR consultant -hiring -jobs',
+    // NetSuite / ERP recommendations
+    query: 'site:linkedin.com/posts ("can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" OR "any recommendations for") (NetSuite OR ERP OR "Dynamics 365" OR "Business Central")' + LINKEDIN_EXCLUDE,
     lob: 'ERP',
     intent: 'Asked on LinkedIn for a NetSuite / ERP partner',
   },
   {
     kind: 'linkedin',
     depth: 'basic',
-    query: 'site:linkedin.com/posts "seeking recommendations" OR "looking for recommendations" OR "can anyone recommend" "cloud migration" OR AWS OR Azure partner OR consultant -hiring -jobs',
+    // ERP selection
+    query: 'site:linkedin.com/posts ("looking for an ERP" OR "evaluating ERP" OR "selecting an ERP" OR "choosing an ERP" OR "ERP implementation partner" OR "NetSuite implementation partner")' + LINKEDIN_EXCLUDE,
+    lob: 'ERP',
+    intent: 'Choosing an ERP and asking on LinkedIn',
+  },
+  {
+    kind: 'linkedin',
+    depth: 'basic',
+    // CRM implementation
+    query: 'site:linkedin.com/posts ("can anyone recommend" OR "looking for recommendations" OR "any recommendations for") (CRM OR Salesforce OR HubSpot) (implementation OR integration OR partner OR consultant)' + LINKEDIN_EXCLUDE,
+    lob: 'ERP',
+    intent: 'Asked on LinkedIn for a CRM implementation partner',
+  },
+  {
+    kind: 'linkedin',
+    depth: 'basic',
+    // Cloud migration
+    query: 'site:linkedin.com/posts ("can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" OR "looking for a partner" OR "need help") ("cloud migration" OR "migrate to AWS" OR "migrate to Azure" OR "AWS partner" OR "Azure partner")' + LINKEDIN_EXCLUDE,
     lob: 'Cloud',
     intent: 'Asked on LinkedIn for a cloud partner',
   },
   {
     kind: 'linkedin',
     depth: 'basic',
-    query: 'site:linkedin.com/posts "can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" "software development company" OR "app development" OR "development partner" -hiring -jobs',
+    // Development firm
+    query: 'site:linkedin.com/posts ("can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" OR "any recommendations for") ("software development company" OR "app development company" OR "development agency" OR "development partner" OR "dev shop")' + LINKEDIN_EXCLUDE,
     lob: 'Application Development',
     intent: 'Asked on LinkedIn for a development partner',
   },
   {
     kind: 'linkedin',
     depth: 'basic',
-    query: 'site:linkedin.com/posts "can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" RPA OR UiPath OR "process automation" partner OR consultant -hiring -jobs',
-    lob: 'Process Automation',
-    intent: 'Asked on LinkedIn for an automation partner',
+    // Build a product
+    query: 'site:linkedin.com/posts ("looking for a team to build" OR "looking for an agency to build" OR "looking for a developer to build" OR "need someone to build" OR "looking for a tech partner to")' + LINKEDIN_EXCLUDE,
+    lob: 'Application Development',
+    intent: 'Looking on LinkedIn for a team to build a product',
   },
   {
     kind: 'linkedin',
     depth: 'basic',
-    query: 'site:linkedin.com/posts "can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" mainframe OR "legacy modernization" OR "legacy system" partner OR consultant -hiring -jobs',
+    // Automation / AI
+    query: 'site:linkedin.com/posts ("can anyone recommend" OR "looking for recommendations" OR "looking for a partner to" OR "need help") ("automate our" OR "process automation" OR RPA OR "implement AI in our" OR "AI agent for our")' + LINKEDIN_EXCLUDE,
+    lob: 'Process Automation',
+    intent: 'Asked on LinkedIn for an automation / AI partner',
+  },
+  {
+    kind: 'linkedin',
+    depth: 'basic',
+    // Data / analytics
+    query: 'site:linkedin.com/posts ("can anyone recommend" OR "looking for recommendations" OR "looking for a consultant") ("Power BI" OR "data warehouse" OR "data analytics" OR "data engineering")' + LINKEDIN_EXCLUDE,
+    lob: 'Solution',
+    intent: 'Asked on LinkedIn for a data / analytics partner',
+  },
+  {
+    kind: 'linkedin',
+    depth: 'basic',
+    // Legacy modernization
+    query: 'site:linkedin.com/posts ("can anyone recommend" OR "looking for a partner" OR "looking for recommendations" OR "need help") ("legacy system" OR "modernize our" OR mainframe OR "replace our system" OR "outdated system")' + LINKEDIN_EXCLUDE,
     lob: 'Legacy Modernization',
     intent: 'Asked on LinkedIn for a modernization partner',
   },
   {
     kind: 'linkedin',
     depth: 'basic',
-    query: 'site:linkedin.com/posts "can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" "offshore development" OR "dedicated development team" OR "development team in India" -hiring -jobs',
+    // Vendors / RFP / offshore
+    query: 'site:linkedin.com/posts ("looking for a vendor" OR "seeking proposals" OR "request for proposal" OR "outsource our development" OR "looking for an offshore" OR "dedicated development team" OR "offshore development partner")' + LINKEDIN_EXCLUDE,
     lob: 'Offshore',
-    intent: 'Asked on LinkedIn for an offshore team',
+    intent: 'Looking on LinkedIn for a vendor or offshore team',
   },
   // ---- Free sources (no search credits) ----
   // Google News: open RFPs, RFIs and tenders where the organization is still
@@ -230,6 +289,35 @@ const SEARCHES = [
     lob: 'auto',
     requireIndustry: 'Energy',
     intent: 'Energy open RFP / tender for technology',
+  },
+  {
+    kind: 'news',
+    query: `(retailer OR "retail chain" OR grocery OR "e-commerce") ${OPEN_CALL_TERMS} (ERP OR "point of sale" OR POS OR software OR omnichannel OR digital)`,
+    lob: 'auto',
+    requireIndustry: 'Retail & Consumer',
+    intent: 'Retail open RFP / tender for technology',
+  },
+  {
+    kind: 'news',
+    query: `("food manufacturer" OR "food processing" OR "beverage company" OR dairy OR brewery) ${OPEN_CALL_TERMS} (ERP OR software OR automation OR traceability OR digital)`,
+    lob: 'auto',
+    requireIndustry: 'Food & Beverage Manufacturing',
+    intent: 'F&B manufacturer open RFP / tender for technology',
+  },
+  // Official public-tender feeds (free): open calls for IT services and software.
+  {
+    kind: 'tender',
+    feed: 'contracts-finder',
+    query: 'UK Contracts Finder: open IT and software tenders',
+    lob: 'auto',
+    intent: 'Open public tender (UK Contracts Finder)',
+  },
+  {
+    kind: 'tender',
+    feed: 'ted',
+    query: 'EU TED: open IT and software tenders',
+    lob: 'auto',
+    intent: 'Open public tender (EU TED)',
   },
   // Regional job posts (paid web search): roles that signal Amzur services in
   // European and UAE cities. The job's own location must be in that region.
@@ -344,7 +432,8 @@ function scoreLead(industry, min, max) {
 
 // ---- LinkedIn posts ----
 
-const LINKEDIN_MAX_AGE_DAYS = LEAD_MAX_AGE_DAYS;
+// LinkedIn posts up to the archive age are kept (20-30 days: the Older leads tab).
+const LINKEDIN_MAX_AGE_DAYS = LEAD_ARCHIVE_DAYS;
 
 // LinkedIn activity IDs embed the post time: the top bits are a millisecond timestamp.
 function linkedInPostDate(url) {
@@ -433,7 +522,11 @@ function describesItselfAsSeller(companyName, text) {
 // A job title or page label picked up instead of a company name,
 // e.g. "Senior Software Engineer" or "Job Application for UiPath".
 function looksLikeJobTitle(name) {
-  return /^job application\b/i.test(name) || /\b(jobs|careers|job board|openings)\b/i.test(name) || /\b(engineer|developer|architect|administrator|analyst|consultant)s?$/i.test(name.trim());
+  return (
+    /^job application\b/i.test(name) ||
+    /\b(jobs|careers|job board|openings)\b/i.test(name) ||
+    /\b(engineer|developer|architect|administrator|analyst|consultant|manager|specialist|scientist)s?(\s+(i{1,3}|iv|v|\d|senior|junior|lead|staff|principal))?$/i.test(name.trim())
+  );
 }
 
 function isJobBoard(domain) {
@@ -449,9 +542,10 @@ let lastSearchError = null;
 
 // 'basic' depth costs 1 credit per search vs 2 for 'advanced'; snippets are
 // shorter but enough to identify the company and signal.
-async function searchWithTavily(query, depth = 'basic') {
-  // Tries Tavily, then Serper, then You.com (whichever have API keys set).
-  const { results, provider, errors } = await searchWeb(query, { depth, maxResults: 10, recentDays: LEAD_MAX_AGE_DAYS });
+async function searchWithTavily(query, depth = 'basic', { maxResults = 10, recentDays = LEAD_MAX_AGE_DAYS, prefer } = {}) {
+  // Tries Tavily, then Serper, then You.com (whichever have API keys set);
+  // `prefer` moves one provider to the front.
+  const { results, provider, errors } = await searchWeb(query, { depth, maxResults, recentDays, prefer });
   if (!provider && errors.length) {
     const last = errors[errors.length - 1];
     lastSearchError = { status: last.status, message: last.message, provider: last.provider };
@@ -626,14 +720,22 @@ function feedRequirement(result) {
   };
 }
 
+// LinkedIn: more results per search over the recency window (posts older than
+// LEAD_MAX_AGE_DAYS are dropped anyway), on Google (Serper) first.
+const LINKEDIN_RESULTS = 20;
+const LINKEDIN_RECENT_DAYS = LEAD_ARCHIVE_DAYS;
+
 async function fetchForSearch(search) {
   try {
-    if (search.kind === 'news') return await searchNews(search.query, { days: LEAD_MAX_AGE_DAYS, edition: search.edition });
+    if (search.kind === 'news') return await searchNews(search.query, { days: LEAD_ARCHIVE_DAYS, edition: search.edition });
+    if (search.kind === 'tender') return search.feed === 'ted' ? await fetchTed() : await fetchContractsFinder();
   } catch (error) {
     console.error(`Free source error for "${search.query}":`, error.message);
     return [];
   }
-  return searchWithTavily(search.query, search.depth);
+  return search.kind === 'linkedin'
+    ? searchWithTavily(search.query, search.depth, { maxResults: LINKEDIN_RESULTS, recentDays: LINKEDIN_RECENT_DAYS, prefer: 'serper' })
+    : searchWithTavily(search.query, search.depth);
 }
 
 /**
@@ -650,6 +752,17 @@ async function saveLinkedInLead(search, result, seenCompanies) {
   if (!verdict.ok) {
     console.log(`   ⏭️  Skipped LinkedIn post (${verdict.reason}): ${url}`);
     return false;
+  }
+
+  // The search snippet passed: check the full public post too (free), which
+  // shows job ads and agency adverts the snippet hides.
+  const post = await fetchLinkedInPost(url).catch(() => null);
+  if (post) {
+    const full = classifyLinkedInPost(url, post.body);
+    if (!full.ok) {
+      console.log(`   ⏭️  Skipped LinkedIn post (${full.reason}, full post): ${url}`);
+      return false;
+    }
   }
 
   const postedAt = linkedInPostDate(url);
@@ -702,7 +815,23 @@ async function saveLinkedInLead(search, result, seenCompanies) {
           tavilyUrl: url,
           techStack: [],
           sourceTitle: result.title || null,
-          requirement: await findRequirementDetails(url, { companyName: author, title: result.title, text }).catch(() => null),
+          requirement: post ? requirementFromPost(post) : await findRequirementDetails(url, { companyName: author, title: result.title, text }).catch(() => null),
+          ...(post
+            ? {
+                linkedinPost: {
+                  author: post.author,
+                  authorUrl: post.authorUrl,
+                  authorFollowers: post.authorFollowers,
+                  likes: post.likes,
+                  comments: post.comments,
+                  postedAt: post.postedAt,
+                  hashtags: post.hashtags,
+                  isRequest: true,
+                  notRequestReason: null,
+                  fetchedAt: post.fetchedAt,
+                },
+              }
+            : {}),
           requirementChecked: true,
           geography: geo.region,
           location: geo.location,
@@ -817,7 +946,7 @@ export async function recheckJobPostings(limit = 25) {
     .filter((lead) => {
       const signals = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
       if (!jobApiUrl(signals.tavilyUrl) || signals.jobOpen === false) return false;
-      if (!isRecent(signals.postedAt)) return false;
+      if (!isRecent(signals.postedAt, LEAD_ARCHIVE_DAYS)) return false;
       const last = signals.jobCheckedAt ? new Date(signals.jobCheckedAt).getTime() : 0;
       return Date.now() - last > 12 * 3600000;
     })
@@ -849,8 +978,19 @@ export async function recheckJobPostings(limit = 25) {
 /**
  * Main lead discovery engine
  */
-export async function discoverLeads() {
-  console.log('🔍 Starting lead discovery process...');
+/**
+ * @param {{ mode?: 'full' | 'linkedin', only?: string[] | null }} [options] 'linkedin'
+ * runs only the LinkedIn searches (the afternoon refresh) and skips the paid
+ * follow-ups; `only` runs just the given search kinds (manual runs and tests).
+ */
+export async function discoverLeads({ mode = 'full', only = null } = {}) {
+  // `only`: a list of search kinds to run (manual runs and tests, e.g. ['tender']).
+  const activeSearches = only
+    ? SEARCHES.filter((s) => only.includes(s.kind || 'web'))
+    : mode === 'linkedin'
+      ? SEARCHES.filter((s) => s.kind === 'linkedin')
+      : SEARCHES;
+  console.log(`🔍 Starting lead discovery (${mode === 'linkedin' ? 'LinkedIn only' : 'full scan'})...`);
 
   const scanRun = await prisma.scanRun.create({
     data: {
@@ -877,7 +1017,7 @@ export async function discoverLeads() {
 
   // Run all searches in parallel; Tavily latency dominates scan time.
   const searchResults = await Promise.all(
-    SEARCHES.map(async (search) => ({ search, results: await fetchForSearch(search) }))
+    activeSearches.map(async (search) => ({ search, results: await fetchForSearch(search) }))
   );
 
   for (const { search, results: fetched } of searchResults) {
@@ -907,8 +1047,10 @@ export async function discoverLeads() {
         continue;
       }
 
-      const companyName =
-        search.kind === 'news'
+      const fromTender = search.kind === 'tender';
+      const companyName = fromTender
+        ? result.buyer
+        : search.kind === 'news'
           ? companyFromHeadline(result.title)
           : extractCompanyName(result) || (isRequirementItem ? companyFromHeadline(result.title) : null);
       if (!companyName) {
@@ -949,7 +1091,9 @@ export async function discoverLeads() {
       }
 
       const sourceText = `${companyName} ${result.title || ''} ${result.content || ''}`;
-      const industry = classifyIndustry(sourceText, companyName);
+      const classified = classifyIndustry(sourceText, companyName);
+      // Tender buyers are public bodies unless the text says otherwise.
+      const industry = fromTender && classified === 'Other' ? 'Public Sector' : classified;
       // Industry-targeted searches match loosely; keep only results really in that industry.
       if (search.requireIndustry && industry !== search.requireIndustry) {
         console.log(`   ⏭️  Skipped: ${companyName} (${industry}, not ${search.requireIndustry})`);
@@ -971,11 +1115,15 @@ export async function discoverLeads() {
       pendingSaves.push((async () => {
       try {
         const fromFeed = search.kind === 'news';
-        const published = fromFeed
+        const published = fromTender
           ? result.published_date
-            ? { date: result.published_date, method: `News feed (${result.publisher || 'Google News'})` }
+            ? { date: result.published_date, method: result.provider === 'ted' ? 'EU TED notice' : 'UK Contracts Finder notice' }
             : null
-          : await findPublishedDate(result.url, result.published_date);
+          : fromFeed
+            ? result.published_date
+              ? { date: result.published_date, method: `News feed (${result.publisher || 'Google News'})` }
+              : null
+            : await findPublishedDate(result.url, result.published_date);
         // Region-targeted searches: must be in that region (or, for regional news
         // editions, at least not clearly somewhere else).
         if (search.requireRegion) {
@@ -988,15 +1136,19 @@ export async function discoverLeads() {
         }
         // Only recent needs: skip sources older than the window or without a date,
         // before spending a search credit on the company profile.
-        if (!published || !isRecent(published.date)) {
-          console.log(`   ⏭️  Skipped: ${companyName} (${published ? `posted ${published.date.slice(0, 10)}` : 'no posting date'}, older than ${LEAD_MAX_AGE_DAYS} days or unknown)`);
+        // Up to LEAD_ARCHIVE_DAYS old: 20-30 day old finds go to the Older leads tab.
+        if (!published || !isRecent(published.date, LEAD_ARCHIVE_DAYS)) {
+          console.log(`   ⏭️  Skipped: ${companyName} (${published ? `posted ${published.date.slice(0, 10)}` : 'no posting date'}, older than ${LEAD_ARCHIVE_DAYS} days or unknown)`);
           return;
         }
         // Only genuine open requirements: vendor not yet chosen. Unclear ones
         // are kept but flagged for review instead of being qualified.
-        const vendorCheck = isRequirementItem
-          ? await classifyVendorIntent({ title: result.title, text: result.content, url: result.url })
-          : null;
+        // Official open calls for tender need no reading for intent.
+        const vendorCheck = fromTender
+          ? { decision: 'include', status: 'open', reason: 'Official open call for tender', method: 'tender feed' }
+          : isRequirementItem
+            ? await classifyVendorIntent({ title: result.title, text: result.content, url: result.url })
+            : null;
         if (vendorCheck?.decision === 'exclude') {
           console.log(`   ⏭️  Skipped: ${companyName} (${vendorCheck.reason})`);
           return;
@@ -1007,10 +1159,13 @@ export async function discoverLeads() {
           : vendorCheck?.status === 'open'
             ? scoreLead(industry, 80, 92)
             : scoreLead(industry, 60, 85);
-        const [profile, requirement] = await Promise.all([
-          findCompanyProfile(companyName, { industry, sourceUrl: result.url }).catch(() => null),
-          fromFeed ? feedRequirement(result) : findRequirementDetails(result.url, { companyName, title: result.title, text: result.content }).catch(() => undefined),
-        ]);
+        // Tender buyers are public bodies: no paid company-profile lookup.
+        const [profile, requirement] = fromTender
+          ? [null, result.requirement]
+          : await Promise.all([
+              findCompanyProfile(companyName, { industry, sourceUrl: result.url }).catch(() => null),
+              fromFeed ? feedRequirement(result) : findRequirementDetails(result.url, { companyName, title: result.title, text: result.content }).catch(() => undefined),
+            ]);
         const tooLargeByProfile = largeEnterpriseReason(companyName, profile?.employees);
         if (tooLargeByProfile) {
           console.log(`   ⏭️  Skipped: ${companyName} (${tooLargeByProfile})`);
@@ -1028,8 +1183,10 @@ export async function discoverLeads() {
           console.log(`   ⏭️  Skipped: ${companyName} (outside ICP: ${icp.summary})`);
           return;
         }
-        const website = profile?.website || companyWebsite;
-        const geo = leadGeography({ requirement, profile, text: `${result.title || ''} ${result.content || ''}` });
+        const website = fromTender ? null : profile?.website || companyWebsite;
+        const geo = fromTender
+          ? { region: 'Europe', location: result.location || result.country }
+          : leadGeography({ requirement, profile, text: `${result.title || ''} ${result.content || ''}` });
         if (search.requireRegion && geo.region === 'Unknown') geo.region = search.requireRegion;
         // Regional searches: the job location / HQ must confirm the region.
         if (search.requireRegion && geo.region !== search.requireRegion) {
@@ -1053,8 +1210,8 @@ export async function discoverLeads() {
             intentSignal,
             recommendedService: search.service || LOB_SERVICES[lob],
             leadScore: score,
-            source: `${query} (${{ news: 'Google News' }[result.provider] || result.provider || 'web search'})`,
-            outreachEmail: `contact@${website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '')}`,
+            source: `${query} (${{ news: 'Google News', 'contracts-finder': 'Contracts Finder', ted: 'TED' }[result.provider] || result.provider || 'web search'})`,
+            outreachEmail: website ? `contact@${website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '')}` : null,
             signals: {
               techStack: [],
               whyThisLead: [
@@ -1069,7 +1226,12 @@ export async function discoverLeads() {
                 ? { status: vendorCheck.status, reason: vendorCheck.reason, method: vendorCheck.method, checkedAt: new Date().toISOString() }
                 : null,
               searchContext: result.content?.substring(0, 500),
-              dataSource: { news: 'Google News', tavily: 'Tavily', serper: 'Serper (Google)', you: 'You.com' }[result.provider] || 'Web search',
+              dataSource:
+                { news: 'Google News', tavily: 'Tavily', serper: 'Serper (Google)', you: 'You.com', 'contracts-finder': 'UK Contracts Finder', ted: 'EU TED' }[
+                  result.provider
+                ] || 'Web search',
+              // Official tenders: the deadline feeds the lead page's RFP panel.
+              ...(fromTender ? { rfp: { deadline: result.deadline ? String(result.deadline).slice(0, 10) : null }, tender: { feed: result.provider, value: result.value, country: result.country } } : {}),
               tavilyUrl: result.url,
               postedAt: published ? published.date : null,
               postedAtSource: published ? published.method : null,
@@ -1098,16 +1260,22 @@ export async function discoverLeads() {
 
   await Promise.all(pendingSaves);
 
-  const jobStatus = await recheckJobPostings(25).catch((error) => {
-    console.error('Re-checking job postings failed:', error.message);
-    return { checked: 0, closed: 0 };
-  });
+  const jobStatus =
+    mode === 'linkedin'
+      ? { checked: 0, closed: 0 }
+      : await recheckJobPostings(25).catch((error) => {
+          console.error('Re-checking job postings failed:', error.message);
+          return { checked: 0, closed: 0 };
+        });
 
-  // Let older leads catch up on company profiles and posted dates.
-  const enrichedExisting = await enrichExistingLeads(15).catch((error) => {
-    console.error('Enriching older leads failed:', error.message);
-    return 0;
-  });
+  // Let older leads catch up on company profiles and posted dates (paid; full scans only).
+  const enrichedExisting =
+    mode === 'linkedin'
+      ? 0
+      : await enrichExistingLeads(15).catch((error) => {
+          console.error('Enriching older leads failed:', error.message);
+          return 0;
+        });
 
   await prisma.scanRun.update({
     where: { id: scanRun.id },
@@ -1115,7 +1283,8 @@ export async function discoverLeads() {
       completedAt: new Date(),
       companiesScanned: totalCompaniesScanned,
       newLeadsFound,
-      sources: sourcesBreakdown,
+      // The scan's mode is recorded so the daily limits can tell scans apart.
+      sources: { ...sourcesBreakdown, __mode: mode },
     },
   });
 
@@ -1132,10 +1301,11 @@ export async function discoverLeads() {
     // treating the whole scan as failed.
     webSearchUnavailable:
       lastSearchError &&
-      SEARCHES.filter((s) => s.kind !== 'news').every((s) => !sourcesBreakdown[s.query])
+      activeSearches.filter((s) => s.kind !== 'news' && s.kind !== 'tender').every((s) => !sourcesBreakdown[s.query])
         ? lastSearchError
         : null,
     sources: sourcesBreakdown,
+    mode,
     duration: new Date() - scanRun.startedAt,
   };
 

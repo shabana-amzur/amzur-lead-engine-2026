@@ -181,7 +181,12 @@ function describeError(error) {
  */
 async function searchWeb(query, options = {}) {
   const errors = [];
-  for (const provider of PROVIDERS) {
+  // options.prefer: try that provider first (e.g. 'serper' for LinkedIn, since
+  // Google honours quotes, OR and -exclusions; Tavily treats them loosely).
+  const ordered = options.prefer
+    ? [...PROVIDERS.filter((p) => p.name === options.prefer), ...PROVIDERS.filter((p) => p.name !== options.prefer)]
+    : PROVIDERS;
+  for (const provider of ordered) {
     if (!provider.key()) continue;
     const off = disabled.get(provider.name);
     if (off && off.until > Date.now()) {

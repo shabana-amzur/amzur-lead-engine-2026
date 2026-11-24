@@ -8,13 +8,48 @@ import { describeSource, isLinkedInLead } from '@/lib/sources';
 import { ICP_OPTIONS, SIGNAL_TYPES, SOURCE_TYPES, VENDOR_STATUS_OPTIONS, icpStatus, signalType, sourceType, vendorStatus, vendorStatusReason } from '@/lib/signals';
 import { REGION_OPTIONS, leadRegion, regionLabel } from '@/lib/regions';
 import { useRouter } from 'next/navigation';
+import SidebarIcon, { INDUSTRY_ICONS, SERVICE_ICONS } from '@/components/SidebarIcon';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-type Filters = { icp: string; region: string; source: string; signal: string; status: string; service: string; industry: string };
-const NO_FILTERS: Filters = { icp: 'all', region: 'all', source: 'all', signal: 'all', status: 'all', service: 'all', industry: 'all' };
+// The dashboard's view (filters, sidebar view, scroll position) is kept for
+// this browser tab, so coming back from a lead returns to the same place.
+const VIEW_KEY = 'lead-engine:dashboard-view';
+const CAME_FROM_DASHBOARD_KEY = 'lead-engine:came-from-dashboard';
+
+type SavedView = { filters: Filters; activeView: string; scrollTop: number };
+function readSavedView(): SavedView | null {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null');
+    return saved && saved.filters ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+type Filters = { quick: string; icp: string; region: string; source: string; signal: string; status: string; service: string; industry: string };
+const NO_FILTERS: Filters = { quick: 'all', icp: 'all', region: 'all', source: 'all', signal: 'all', status: 'all', service: 'all', industry: 'all' };
+
+// The number cards: which leads each one counts (and lists when clicked).
+const DAY_MS = 86400000;
+const startOfDay = (offsetDays = 0) => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime() - offsetDays * DAY_MS;
+};
+const foundToday = (lead: any) => new Date(lead.discoveredAt).getTime() >= startOfDay(0);
+const foundYesterday = (lead: any) => {
+  const t = new Date(lead.discoveredAt).getTime();
+  return t >= startOfDay(1) && t < startOfDay(0);
+};
+const foundThisWeek = (lead: any) => new Date(lead.discoveredAt).getTime() >= startOfDay(6);
+const isHighIntent = (lead: any) => lead.leadScore >= 75 && vendorStatus(lead) !== 'review';
+const QUICK_LABELS: Record<string, string> = { 'new-today': 'New today', 'high-intent': 'High intent (75+)' };
 
 function matchesFilters(lead: any, filters: Filters) {
   return (
+    (filters.quick === 'all' ||
+      (filters.quick === 'new-today' && foundToday(lead)) ||
+      (filters.quick === 'high-intent' && isHighIntent(lead))) &&
     (filters.icp === 'all' || icpStatus(lead) === filters.icp) &&
     (filters.region === 'all' || leadRegion(lead) === filters.region) &&
     (filters.source === 'all' || sourceType(lead) === filters.source) &&
@@ -66,6 +101,52 @@ export default function DashboardPage() {
   const [activeView, setActiveView] = useState('dashboard');
   const hasFilters = Object.values(filters).some((value) => value !== 'all');
 
+  // Restore the saved view when the dashboard opens (filters now, scroll once
+  // the leads are on the page), and keep saving it as it changes.
+  const savedView = useRef<SavedView | null>(null);
+  const restoredScroll = useRef(false);
+  const [viewRestored, setViewRestored] = useState(false);
+  useEffect(() => {
+    savedView.current = readSavedView();
+    if (savedView.current) {
+      setFilters({ ...NO_FILTERS, ...savedView.current.filters });
+      setActiveView(savedView.current.activeView || 'dashboard');
+    }
+    setViewRestored(true);
+  }, []);
+  const saveView = useCallback(
+    (scrollTop?: number) => {
+      if (!viewRestored) return;
+      const main = document.getElementById('dashboard-main');
+      try {
+        sessionStorage.setItem(
+          VIEW_KEY,
+          JSON.stringify({ filters, activeView, scrollTop: scrollTop ?? main?.scrollTop ?? 0 })
+        );
+      } catch {
+        // storage unavailable (private mode): the view just isn't remembered
+      }
+    },
+    [filters, activeView, viewRestored]
+  );
+  useEffect(() => {
+    saveView();
+  }, [saveView]);
+  useEffect(() => {
+    const main = document.getElementById('dashboard-main');
+    if (!main) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onScroll = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => saveView(main.scrollTop), 150);
+    };
+    main.addEventListener('scroll', onScroll);
+    return () => {
+      clearTimeout(timer);
+      main.removeEventListener('scroll', onScroll);
+    };
+  }, [saveView]);
+
   const scrollToTable = () =>
     document.getElementById('opportunities')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -77,10 +158,10 @@ export default function DashboardPage() {
     scrollToTable();
   };
 
-  const selectView = (view: 'dashboard' | 'all') => {
+  const selectView = (view: 'dashboard' | 'all' | 'older') => {
     setActiveView(view);
     setFilters(NO_FILTERS);
-    if (view === 'dashboard') {
+    if (view === 'dashboard' || view === 'older') {
       document.getElementById('dashboard-main')?.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
       scrollToTable();
@@ -93,10 +174,21 @@ export default function DashboardPage() {
     }`;
 
   // Fetch all leads
+  const olderView = activeView === 'older';
   const { data: leadsData, error: leadsError, mutate: refreshLeads } = useSWR(
-    '/api/leads?limit=200',
-    () => leadsAPI.getAll({ page: 1, limit: 200 })
+    olderView ? '/api/leads?limit=200&view=older' : '/api/leads?limit=200',
+    () => leadsAPI.getAll(olderView ? { page: 1, limit: 200, view: 'older' } : { page: 1, limit: 200 }),
+    { keepPreviousData: true }
   );
+  // The Older tab's count, from whichever list is loaded (both report it).
+  const olderCount: number = leadsData?.olderCount ?? 0;
+
+  useEffect(() => {
+    if (!leadsData || restoredScroll.current || !viewRestored) return;
+    restoredScroll.current = true;
+    const top = savedView.current?.scrollTop || 0;
+    if (top > 0) requestAnimationFrame(() => document.getElementById('dashboard-main')?.scrollTo({ top }));
+  }, [leadsData, viewRestored]);
 
   // Fetch latest scan
   const { data: scanData, mutate: refreshLatestScan } = useSWR('/api/scan/latest', () => scanAPI.getLatest());
@@ -130,7 +222,9 @@ export default function DashboardPage() {
         );
       } else if (result.status === 'skipped') {
         const last = new Date(result.lastScanAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        setRefreshMessage(`Leads were refreshed today at ${last}. New leads are searched once a day; the next search runs tomorrow.`);
+        setRefreshMessage(
+          `Leads were refreshed today at ${last}. New leads are searched once a day, with a LinkedIn-only refresh later in the day.`
+        );
       } else if (result.status === 'search_unavailable') {
         setRefreshMessage(
           result.error?.status === 432
@@ -160,9 +254,44 @@ export default function DashboardPage() {
   // Calculate metrics
   const totalLeads = leads.length;
   // Review-required leads aren't qualified yet, so they never count as high intent.
-  const highIntentLeads = leads.filter((l: any) => l.leadScore >= 75 && vendorStatus(l) !== 'review').length;
-  const tenders = leads.filter((l: any) => signalType(l) === 'Tender / RFP').length;
-  const hiringCompanies = leads.filter((l: any) => signalType(l) === 'Hiring').length;
+  const highIntentLeads = leads.filter(isHighIntent).length;
+  const tenderLeads = leads.filter((l: any) => signalType(l) === 'Tender / RFP');
+  const tenders = tenderLeads.length;
+  const hiringLeads = leads.filter((l: any) => signalType(l) === 'Hiring');
+  const hiringCompanies = hiringLeads.length;
+  const newToday = leads.filter(foundToday).length;
+  const newYesterday = leads.filter(foundYesterday).length;
+  const newThisWeek = leads.filter(foundThisWeek).length;
+  const highIntentThisWeek = leads.filter((l: any) => isHighIntent(l) && foundThisWeek(l)).length;
+  const hiringThisWeek = hiringLeads.filter(foundThisWeek).length;
+  // Tenders whose deadline (from the notice or set on the lead) is within 7 days.
+  const tendersClosingSoon = tenderLeads.filter((l: any) => {
+    const deadline = l.signals?.rfp?.deadline ? new Date(`${l.signals.rfp.deadline}T23:59:59`).getTime() : null;
+    return deadline !== null && deadline >= Date.now() && deadline - Date.now() <= 7 * DAY_MS;
+  }).length;
+
+  // Clicking a number card shows exactly the leads it counts.
+  const showCard = (card: 'total' | 'new-today' | 'high-intent' | 'tenders' | 'hiring') => {
+    const next: Filters =
+      card === 'new-today' || card === 'high-intent'
+        ? { ...NO_FILTERS, quick: card }
+        : card === 'tenders'
+          ? { ...NO_FILTERS, signal: 'Tender / RFP' }
+          : card === 'hiring'
+            ? { ...NO_FILTERS, signal: 'Hiring' }
+            : NO_FILTERS;
+    setActiveView('all');
+    setFilters(next);
+    scrollToTable();
+  };
+  const cardActive = (card: string) =>
+    card === 'total'
+      ? !hasFilters
+      : card === 'tenders'
+        ? filters.signal === 'Tender / RFP'
+        : card === 'hiring'
+          ? filters.signal === 'Hiring'
+          : filters.quick === card;
 
   const filteredLeads = leads.filter((lead: any) => matchesFilters(lead, filters));
   const industryCount = (industry: string) => leads.filter((l: any) => (l.industry || 'Other') === industry).length;
@@ -187,12 +316,13 @@ export default function DashboardPage() {
     <div className="flex h-screen min-h-[700px] bg-gray-50">
       {/* Sidebar */}
       <div className="w-[200px] min-w-[200px] bg-white border-r border-gray-200 flex flex-col">
-        <div className="p-5 border-b border-gray-200">
-          <div className="text-sm font-medium text-gray-900 flex items-center">
-            <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-2 animate-pulse"></span>
+        <div className="px-4 pt-4 pb-3" style={{ backgroundColor: '#2f0a4d' }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/amzur-logo-white.png" alt="Amzur Technologies" width={150} height={49} className="w-[150px] h-auto" />
+          <div className="mt-3 text-sm font-medium text-white flex items-center">
+            <span className="inline-block w-2 h-2 rounded-full bg-green-400 mr-2 animate-pulse"></span>
             Lead Engine
           </div>
-          <div className="text-xs text-gray-500 mt-1">Amzur Technologies</div>
         </div>
         
         <div className="p-3 flex-1 overflow-y-auto">
@@ -202,34 +332,43 @@ export default function DashboardPage() {
             onClick={() => selectView('dashboard')}
             className={navItemClass(activeView === 'dashboard' && !hasFilters)}
           >
-            <span className="flex items-center gap-2"><span>📊</span> Dashboard</span>
+            <span className="flex items-center gap-2"><SidebarIcon name="dashboard" /> Dashboard</span>
           </button>
           <button
             type="button"
             onClick={() => selectView('all')}
             className={navItemClass(activeView === 'all' && !hasFilters)}
           >
-            <span className="flex items-center gap-2"><span>📋</span> All Leads</span>
-            <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{totalLeads}</span>
+            <span className="flex items-center gap-2"><SidebarIcon name="list" /> All Leads</span>
+            <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{olderView ? '' : totalLeads}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => selectView('older')}
+            className={navItemClass(olderView)}
+            title={`Leads posted ${leadsData?.olderWindow?.from ?? 20}-${leadsData?.olderWindow?.to ?? 30} days ago`}
+          >
+            <span className="flex items-center gap-2"><SidebarIcon name="archive" /> Older leads <span className="text-[10px] text-gray-400">20–30 days</span></span>
+            <span className="text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">{olderCount}</span>
           </button>
           <button
             type="button"
             onClick={() => toggleFilter('signal', 'Tender / RFP')}
             className={navItemClass(filters.signal === 'Tender / RFP')}
           >
-            <span className="flex items-center gap-2"><span>📄</span> Tenders</span>
+            <span className="flex items-center gap-2"><SidebarIcon name="tender" /> Tenders</span>
             <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{tenders}</span>
           </button>
 
           <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2 mt-4">Services</div>
-          {LOB_OPTIONS.map(({ value: lob, label, icon }) => (
+          {LOB_OPTIONS.map(({ value: lob, label }) => (
             <button
               type="button"
               key={lob}
               onClick={() => toggleFilter('service', lob)}
               className={navItemClass(filters.service === lob)}
             >
-              <span className="flex items-center gap-2"><span>{icon}</span> {label}</span>
+              <span className="flex items-center gap-2"><SidebarIcon name={SERVICE_ICONS[lob] || 'list'} /> {label}</span>
               <span className="text-[10px] text-gray-400">
                 {leads.filter((l: any) => l.lob === lob).length}
               </span>
@@ -237,14 +376,14 @@ export default function DashboardPage() {
           ))}
 
           <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2 mt-4">Priority Industries</div>
-          {PRIORITY_INDUSTRIES.map(({ value, label, icon }) => (
+          {PRIORITY_INDUSTRIES.map(({ value, label }) => (
             <button
               type="button"
               key={value}
               onClick={() => toggleFilter('industry', value)}
               className={navItemClass(filters.industry === value)}
             >
-              <span className="flex items-center gap-2"><span>{icon}</span> {label}</span>
+              <span className="flex items-center gap-2"><SidebarIcon name={INDUSTRY_ICONS[value] || 'list'} /> {label}</span>
               <span className="text-[10px] text-gray-400">{industryCount(value)}</span>
             </button>
           ))}
@@ -254,14 +393,14 @@ export default function DashboardPage() {
             title="Configuration is not available yet"
             className="mb-1 px-2 py-2 rounded-md text-sm text-gray-400 cursor-not-allowed flex items-center gap-2 justify-between"
           >
-            <span className="flex items-center gap-2"><span>⚙️</span> Configuration</span>
+            <span className="flex items-center gap-2"><SidebarIcon name="settings" /> Configuration</span>
             <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">Soon</span>
           </div>
         </div>
         
         <div className="p-3 border-t border-gray-200 text-xs text-gray-500">
           <div className="flex items-center gap-2 mb-1">
-            <span>🤖</span>
+            <SidebarIcon name="pulse" className="w-3.5 h-3.5 text-green-600" />
             <span>Auto-Discovery Engine</span>
           </div>
           {latestScan && (
@@ -270,7 +409,7 @@ export default function DashboardPage() {
             </div>
           )}
           <div className="text-[10px] text-gray-400 ml-5">
-            Searches once a day
+            Daily search + LinkedIn refresh
           </div>
         </div>
       </div>
@@ -281,13 +420,19 @@ export default function DashboardPage() {
           {/* Header */}
           <div className="flex justify-between items-start mb-5">
             <div>
-              <h1 className="text-lg font-medium text-gray-900">Lead Discovery Dashboard</h1>
+              <h1 className="text-lg font-medium text-gray-900">{olderView ? 'Older leads' : 'Lead Discovery Dashboard'}</h1>
               <p className="text-sm text-gray-600 mt-0.5">
-                {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} · {totalLeads} opportunities tracked
+                {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} ·{' '}
+                {olderView
+                  ? `${totalLeads} leads posted ${leadsData?.olderWindow?.from ?? 20}–${leadsData?.olderWindow?.to ?? 30} days ago`
+                  : `${totalLeads} opportunities tracked`}
               </p>
               {latestScan && (
                 <p className="text-xs text-gray-500 mt-1">
-                  🤖 Last scan: {new Date(latestScan.startedAt).toLocaleString()} · {latestScan.newLeadsFound} new leads found
+                  <span className="inline-flex items-center gap-1.5">
+                    <SidebarIcon name="pulse" className="w-3.5 h-3.5 text-green-600" />
+                    Last scan: {new Date(latestScan.startedAt).toLocaleString()} · {latestScan.newLeadsFound} new leads found
+                  </span>
                 </p>
               )}
             </div>
@@ -297,7 +442,7 @@ export default function DashboardPage() {
                 disabled={checking}
                 className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md bg-white hover:bg-gray-50 disabled:opacity-60 disabled:cursor-wait flex items-center gap-2"
               >
-                <span className={checking ? 'animate-spin' : ''}>🔄</span>
+                <SidebarIcon name="refresh" className={`w-4 h-4 ${checking ? 'animate-spin' : ''}`} />
                 {checking ? 'Checking…' : 'Refresh Results'}
               </button>
               {refreshMessage && (
@@ -312,33 +457,48 @@ export default function DashboardPage() {
             </p>
           )}
 
-          {/* Metrics */}
-          <div className="grid grid-cols-5 gap-3 mb-5">
-            <div className="bg-gray-100 rounded-lg p-4">
-              <div className="text-xs text-gray-600 mb-2">Total Opportunities</div>
-              <div className="text-2xl font-medium text-gray-900 font-mono">{totalLeads}</div>
-              <div className="text-xs text-green-600 mt-1">↗ +{Math.floor(totalLeads * 0.15)} this week</div>
+          {olderView && (
+            <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              These leads were posted {leadsData?.olderWindow?.from ?? 20}–{leadsData?.olderWindow?.to ?? 30} days ago. The need may already be filled or a
+              vendor chosen, so confirm it&apos;s still open before outreach. Leads older than {leadsData?.olderWindow?.to ?? 30} days are kept in the
+              database but no longer shown.{' '}
+              <button type="button" onClick={() => selectView('dashboard')} className="font-medium text-blue-700 hover:text-blue-900">
+                ← Back to current leads
+              </button>
             </div>
-            <div className="bg-gray-100 rounded-lg p-4">
-              <div className="text-xs text-gray-600 mb-2">New Today</div>
-              <div className="text-2xl font-medium text-gray-900 font-mono">{latestScan?.newLeadsFound || 0}</div>
-              <div className="text-xs text-green-600 mt-1">↗ +{Math.max(0, (latestScan?.newLeadsFound || 0) - 3)} vs yesterday</div>
-            </div>
-            <div className="bg-gray-100 rounded-lg p-4">
-              <div className="text-xs text-gray-600 mb-2">High Intent (75+)</div>
-              <div className="text-2xl font-medium text-gray-900 font-mono">{highIntentLeads}</div>
-              <div className="text-xs text-green-600 mt-1">↗ +{Math.floor(highIntentLeads * 0.15)} this week</div>
-            </div>
-            <div className="bg-gray-100 rounded-lg p-4">
-              <div className="text-xs text-gray-600 mb-2">Active Tenders</div>
-              <div className="text-2xl font-medium text-gray-900 font-mono">{tenders}</div>
-              <div className="text-xs text-gray-500 mt-1">{Math.max(1, Math.floor(tenders * 0.15))} closing soon</div>
-            </div>
-            <div className="bg-gray-100 rounded-lg p-4">
-              <div className="text-xs text-gray-600 mb-2">Hiring Companies</div>
-              <div className="text-2xl font-medium text-gray-900 font-mono">{hiringCompanies}</div>
-              <div className="text-xs text-green-600 mt-1">↗ +{Math.floor(hiringCompanies * 0.15)} this week</div>
-            </div>
+          )}
+
+          {/* Metrics: each number opens the leads it counts */}
+          <div className={`grid grid-cols-5 gap-3 mb-5 ${olderView ? 'hidden' : ''}`}>
+            {[
+              { card: 'total', label: 'Total Opportunities', value: totalLeads, note: `+${newThisWeek} found this week`, good: newThisWeek > 0 },
+              { card: 'new-today', label: 'New Today', value: newToday, note: `${newYesterday} found yesterday`, good: newToday > 0 },
+              { card: 'high-intent', label: 'High Intent (75+)', value: highIntentLeads, note: `+${highIntentThisWeek} this week`, good: highIntentThisWeek > 0 },
+              {
+                card: 'tenders',
+                label: 'Active Tenders',
+                value: tenders,
+                note: `${tendersClosingSoon} closing within 7 days`,
+                good: false,
+              },
+              { card: 'hiring', label: 'Hiring Companies', value: hiringCompanies, note: `+${hiringThisWeek} this week`, good: hiringThisWeek > 0 },
+            ].map(({ card, label, value, note, good }) => (
+              <button
+                key={card}
+                type="button"
+                onClick={() => showCard(card as any)}
+                title={`Show ${label.toLowerCase()} in the table`}
+                className={`text-left rounded-lg p-4 transition-colors cursor-pointer border ${
+                  cardActive(card) && !(card === 'total' && activeView === 'dashboard')
+                    ? 'bg-blue-50 border-blue-300'
+                    : 'bg-gray-100 border-transparent hover:bg-gray-200'
+                }`}
+              >
+                <div className="text-xs text-gray-600 mb-2">{label}</div>
+                <div className="text-2xl font-medium text-blue-700 font-mono underline decoration-dotted underline-offset-4">{value}</div>
+                <div className={`text-xs mt-1 ${good ? 'text-green-600' : 'text-gray-500'}`}>{note}</div>
+              </button>
+            ))}
           </div>
 
           {/* Filters */}
@@ -389,6 +549,14 @@ export default function DashboardPage() {
                 count: countWith('industry', value),
               }))}
             />
+            {filters.quick !== 'all' && (
+              <span className="inline-flex items-center gap-1 text-xs rounded-md border border-blue-300 bg-blue-50 text-blue-700 px-2 py-1">
+                {QUICK_LABELS[filters.quick] || filters.quick}
+                <button type="button" onClick={() => setFilter('quick', 'all')} className="hover:text-blue-900" aria-label="Remove this filter">
+                  ×
+                </button>
+              </span>
+            )}
             {hasFilters && (
               <button
                 type="button"
@@ -402,8 +570,10 @@ export default function DashboardPage() {
               Showing {filteredLeads.length} of {totalLeads}
               {leadsData?.recentDays ? (
                 <span className="block text-[10px] text-gray-400">
-                  Posted in the last {leadsData.recentDays} days
-                  {leadsData.hiddenOlder ? ` · ${leadsData.hiddenOlder} older leads hidden` : ''}
+                  {olderView
+                    ? `Posted ${leadsData.olderWindow?.from ?? 20}–${leadsData.olderWindow?.to ?? 30} days ago`
+                    : `Posted in the last ${leadsData.recentDays} days`}
+                  {!olderView && olderCount ? ` · ${olderCount} in Older leads` : ''}
                   {leadsData.hiddenOtherRegions ? ` · ${leadsData.hiddenOtherRegions} outside USA/UAE/Europe/India hidden` : ''}
                   {leadsData.hiddenClosed ? ` · ${leadsData.hiddenClosed} closed job postings hidden` : ''}
                   {leadsData.hiddenOutsideIcp ? ` · ${leadsData.hiddenOutsideIcp} outside ICP hidden` : ''}
@@ -418,7 +588,7 @@ export default function DashboardPage() {
             <div className="flex justify-between items-center px-4 py-3 border-b border-gray-200">
               <span className="text-sm font-medium text-gray-900">Opportunities</span>
               <div className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-500 bg-gray-50">
-                <span>🔍</span>
+                <SidebarIcon name="search" className="w-4 h-4 text-gray-400" />
                 <span>Search companies...</span>
               </div>
             </div>
@@ -448,7 +618,15 @@ export default function DashboardPage() {
                     {filteredLeads.map((lead: any) => (
                       <tr 
                         key={lead.id}
-                        onClick={() => router.push(`/dashboard/leads/${lead.id}`)}
+                        onClick={() => {
+                          saveView();
+                          try {
+                            sessionStorage.setItem(CAME_FROM_DASHBOARD_KEY, '1');
+                          } catch {
+                            // storage unavailable: Back still opens the dashboard
+                          }
+                          router.push(`/dashboard/leads/${lead.id}`);
+                        }}
                         className="border-b border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
                       >
                         <td className="px-4 py-3 text-sm">
@@ -464,7 +642,8 @@ export default function DashboardPage() {
                         </td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-medium ${industryBadge(lead.industry || 'Other')}`}>
-                            {lead.industry || 'Other'}{isPriorityIndustry(lead.industry) ? ' ★' : ''}
+                            {lead.industry || 'Other'}
+                            {isPriorityIndustry(lead.industry) && <SidebarIcon name="star" className="w-3 h-3 ml-1 fill-current" />}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -474,14 +653,14 @@ export default function DashboardPage() {
                         </td>
                         <td className="px-4 py-3">
                           <span className="inline-flex items-center gap-1 text-xs text-gray-600 bg-gray-100 px-2 py-1 rounded-lg border border-gray-200">
-                            ⚡ {lead.intentSignal || 'N/A'}
+                            <SidebarIcon name="energy" className="w-3 h-3 text-amber-500" /> {lead.intentSignal || 'N/A'}
                           </span>
                           {vendorStatus(lead) === 'review' && (
                             <div
                               className="mt-1 inline-flex items-center text-[10px] font-medium text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded"
                               title={vendorStatusReason(lead) || 'Vendor selection status unclear'}
                             >
-                              ⚠ Review required
+                              <SidebarIcon name="warning" className="w-3 h-3 mr-1" /> Review required
                             </div>
                           )}
                         </td>
@@ -498,7 +677,11 @@ export default function DashboardPage() {
                               <>
                                 <div className="text-gray-700">
                                   {source.type}
-                                  {lead.signals?.jobOpen === true && <span className="ml-1 text-emerald-600" title="Posting still open">✓ open</span>}
+                                  {lead.signals?.jobOpen === true && (
+                                    <span className="ml-1 inline-flex items-center gap-0.5 text-emerald-600" title="Posting still open">
+                                      <SidebarIcon name="check" className="w-3 h-3" /> open
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="text-[10px] text-gray-400">{source.where}</div>
                               </>

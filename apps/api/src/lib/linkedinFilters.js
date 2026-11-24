@@ -15,7 +15,7 @@ const AMZUR_SERVICE =
 
 // Rhetorical or second-hand phrasing around the ask.
 const NOT_A_REAL_ASK =
-  /\b(how (can|could|do|would) (anyone|you|i) recommend|why (would|do) (anyone|you) recommend|better off looking for recommendations|instead of looking for recommendations|recommendations from [^.?!]{0,40}(customers|users|peers))\b/i;
+  /\b(how (can|could|do|would) (anyone|you|i) recommend|why (would|do) (anyone|you) recommend|better off looking for recommendations|instead of looking for recommendations|recommendations from [^.?!]{0,40}(customers|users|peers)|posts like|(noticed|seeing|seen) a (growing |new )?trend|i('ve| have) (noticed|seen) (a lot of|many|more)|a lot of (companies|founders|people) (are|keep)|here'?s (why|how|what)|lessons? (learned|from))\b/i;
 
 // Hiring / recruiting language anywhere in the post text.
 const HIRING =
@@ -24,6 +24,14 @@ const HIRING =
 // Selling / self-promotion.
 const SELF_PROMOTION =
   /(\b(we help|our (team|clients|services|consultants|experts|ai|platform|solution|solutions|product|products|app|tool)|contact us|dm me|book a (call|demo)|reach out to us|we offer|we (build|provide|deliver)|we have a|as a (leading|certified)|partner of the year|introducing|\d+\+ (products|projects|clients|apps) (shipped|delivered|built)|top \d+ [^.]{0,40}(companies|firms|partners|providers))\b|looking for recommendations\?)/i;
+
+// A question aimed at the reader ("Need an elite development partner?",
+// "Looking for a reliable app developer?") is how agencies advertise, unlike a
+// genuine "Can anyone recommend ...?".
+const READER_QUESTION = /^(need|looking for|searching for|want|struggling (with|to find))\b[^.?!]{0,90}\?/i;
+// Sales copy anywhere in the post.
+const SALES_COPY =
+  /\b(\d+\+?\s*(years|clients|customers|projects|products|apps|engineers|developers)\b|years of (engineering |industry )?(experience|excellence)|track record|our (portfolio|clients|team of|services|expertise)|we (build|provide|deliver|offer|specialize|help)|book a (call|demo|consultation)|dm (me|us)|get in touch|contact us|visit (our|us)|free consultation|let'?s (talk|connect|build))\b/i;
 
 // Words in the post URL slug that mark a job ad, e.g. /posts/name_hiring-nowhiring-finops-...
 const HIRING_URL = /linkedin\.com\/posts\/[^/]*?[_-](hiring|nowhiring|wearehiring|jobs?|jobopening|vacancy|vacancies|recruiting|recruitment|careers?|opening|openings)[-_]/i;
@@ -63,6 +71,7 @@ function findAsk(text) {
     text: ask,
     askOnly,
     before: clean.slice(0, match.index + match[0].length),
+    fromAsk: clean.slice(match.index),
     around: clean.slice(Math.max(0, match.index - 60), match.index + match[0].length + 200),
   };
 }
@@ -78,6 +87,8 @@ function classifyLinkedInPost(url, text) {
   // Only the author's own text up to the ask: replies from vendors come after it.
   if (SELF_PROMOTION.test(ask.before)) return { ok: false, reason: 'self-promotion' };
   if (NOT_A_REAL_ASK.test(ask.around)) return { ok: false, reason: 'rhetorical or second-hand' };
+  // A question to the reader followed by a sales pitch is an advert.
+  if (READER_QUESTION.test(ask.fromAsk) && SALES_COPY.test(cleanPostText(text))) return { ok: false, reason: 'self-promotion' };
   // The service being asked for must be in the ask itself, not elsewhere on the page.
   if (!AMZUR_SERVICE.test(ask.askOnly)) return { ok: false, reason: 'not asking for an Amzur service' };
   return { ok: true, ask: ask.text };

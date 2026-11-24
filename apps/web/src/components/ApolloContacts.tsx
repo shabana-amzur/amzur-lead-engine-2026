@@ -5,6 +5,7 @@
 // Revealed contacts are saved on the lead, so they are never paid for twice.
 import { useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
+import Icon from '@/components/SidebarIcon';
 import { apolloAPI } from '@/lib/api';
 import { personaOutreach, type Brief } from '@/lib/leadBrief';
 
@@ -54,7 +55,7 @@ function SequencePicker({ lead, contact, onDone }: { lead: any; contact: Contact
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState('');
   if (contact.sequence) {
-    return <span className="text-xs text-emerald-700">✉️ In sequence “{contact.sequence.name || 'Apollo sequence'}”</span>;
+    return <span className="text-xs text-emerald-700 inline-flex items-center gap-1"><Icon name="mail" className="w-3 h-3" /> In sequence “{contact.sequence.name || 'Apollo sequence'}”</span>;
   }
   if (!open) {
     return (
@@ -179,7 +180,10 @@ export default function ApolloContacts({ lead, onChange, brief }: { lead: any; o
 
   // Names and titles are free: look them up as soon as the page opens, and
   // again when an older search (e.g. on a guessed website) found nobody.
-  const outdated = !!saved.searchedAt && !candidates.length && (saved.searchVersion || 1) < (status?.contactSearchVersion || 1);
+  const outdated =
+    !!saved.searchedAt &&
+    (saved.searchVersion || 1) < (status?.contactSearchVersion || 1) &&
+    (!candidates.length || !lead.signals?.company?.website);
   useEffect(() => {
     if (status?.configured && (!saved.searchedAt || outdated) && !searched.current) {
       searched.current = true;
@@ -280,7 +284,7 @@ export default function ApolloContacts({ lead, onChange, brief }: { lead: any; o
                     <div className="mt-2 space-y-1 text-xs">
                       {contact.email ? (
                         <div>
-                          ✉️{' '}
+                          <Icon name="mail" className="inline-block -mt-0.5 mr-1 w-3.5 h-3.5" />
                           <a href={`mailto:${contact.email}`} className="text-blue-600 hover:text-blue-800 break-all">
                             {contact.email}
                           </a>
@@ -291,13 +295,13 @@ export default function ApolloContacts({ lead, onChange, brief }: { lead: any; o
                       )}
                       {(contact.phones || []).map((phone) => (
                         <div key={phone.number} className="text-gray-700">
-                          📞 <a href={`tel:${phone.number}`} className="hover:text-blue-700">{phone.number}</a>
+                          <Icon name="phone" className="inline-block -mt-0.5 mr-1 w-3.5 h-3.5" /><a href={`tel:${phone.number}`} className="hover:text-blue-700">{phone.number}</a>
                           {phone.type && <span className="text-gray-400"> · {PHONE_TYPES[phone.type] || phone.type}</span>}
                         </div>
                       ))}
                       {!(contact.phones || []).length && contact.phone && (
                         <div className="text-gray-700">
-                          📞 <a href={`tel:${contact.phone}`} className="hover:text-blue-700">{contact.phone}</a>
+                          <Icon name="phone" className="inline-block -mt-0.5 mr-1 w-3.5 h-3.5" /><a href={`tel:${contact.phone}`} className="hover:text-blue-700">{contact.phone}</a>
                           {contact.phoneIsCompany && <span className="text-gray-400"> · company line</span>}
                         </div>
                       )}
@@ -305,7 +309,7 @@ export default function ApolloContacts({ lead, onChange, brief }: { lead: any; o
                         <div className="text-amber-700">{waitingForPhone ? 'Looking up phone numbers… (can take a minute)' : 'Phone lookup still pending in Apollo'}</div>
                       )}
                       {contact.phoneStatus === 'none' && <div className="text-gray-500">No direct phone number found</div>}
-                      {contact.location && <div className="text-gray-500">📍 {contact.location}</div>}
+                      {contact.location && <div className="text-gray-500"><Icon name="pin" className="inline-block -mt-0.5 mr-1 w-3.5 h-3.5" />{contact.location}</div>}
                     </div>
                   )}
 
@@ -330,7 +334,7 @@ export default function ApolloContacts({ lead, onChange, brief }: { lead: any; o
                             onClick={() => revealEmail(candidate)}
                             className="text-xs px-2 py-1 rounded-md border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
                           >
-                            {busy === `${candidate.id}:email` ? 'Revealing…' : '✉️ Reveal email · 1 credit'}
+                            {busy === `${candidate.id}:email` ? 'Revealing…' : <span className="inline-flex items-center gap-1"><Icon name="mail" className="w-3 h-3" /> Reveal email · 1 credit</span>}
                           </button>
                         ) : (
                           <span className="text-xs text-gray-400 py-1">No email in Apollo</span>
@@ -342,7 +346,7 @@ export default function ApolloContacts({ lead, onChange, brief }: { lead: any; o
                           onClick={() => revealPhone(candidate, contact)}
                           className="text-xs px-2 py-1 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                         >
-                          {busy === `${candidate.id}:phone` ? 'Requesting…' : '📞 Reveal phone · credits'}
+                          {busy === `${candidate.id}:phone` ? 'Requesting…' : <span className="inline-flex items-center gap-1"><Icon name="phone" className="w-3 h-3" /> Reveal phone · credits</span>}
                         </button>
                       )}
                     </div>

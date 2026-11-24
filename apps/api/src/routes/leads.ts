@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import prisma from '../lib/prisma';
 import { AuthRequest, authenticateToken } from '../middleware/auth';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { LEAD_MAX_AGE_DAYS, isRecent } = require('../config/recency');
+const { LEAD_MAX_AGE_DAYS, LEAD_ARCHIVE_DAYS, isRecent, ageInDays } = require('../config/recency');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { checkIcp } = require('../lib/icp');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -31,6 +31,12 @@ function logActivity(signals: any, req: AuthRequest, type: string, detail: strin
 }
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { searchNews } = require('../lib/freeSources');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { findAboutDescription } = require('../lib/companyAbout');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { fetchLinkedInPost, requirementFromPost } = require('../lib/linkedinPost');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { classifyLinkedInPost } = require('../lib/linkedinFilters');
 
 const router = Router();
 
@@ -49,6 +55,12 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     // Only leads posted online within the recency window, unless includeOlder=true.
     const includeOlder = req.query.includeOlder === 'true';
     const recentDays = parseInt(req.query.recentDays as string) || LEAD_MAX_AGE_DAYS;
+    // view=older: the "Older leads" tab, posted LEAD_MAX_AGE_DAYS-LEAD_ARCHIVE_DAYS days ago.
+    const olderView = req.query.view === 'older';
+    const inOlderWindow = (lead: any) => {
+      const age = ageInDays(lead.signals?.postedAt);
+      return age !== null && age > LEAD_MAX_AGE_DAYS && age <= LEAD_ARCHIVE_DAYS;
+    };
     // Only target regions (USA, UAE, Europe, India) or unknown location, unless includeOtherRegions=true.
     const includeOtherRegions = req.query.includeOtherRegions === 'true';
     // Leads clearly outside the ideal customer profile are hidden unless includeOutsideIcp=true.
@@ -84,7 +96,9 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     const matching = await prisma.lead.findMany({ where, orderBy: { leadScore: 'desc' } });
     const recent = includeOlder
       ? matching
-      : matching.filter((lead: any) => isRecent(lead.signals?.postedAt, recentDays));
+      : olderView
+        ? matching.filter(inOlderWindow)
+        : matching.filter((lead: any) => isRecent(lead.signals?.postedAt, recentDays));
     const inRegion = includeOtherRegions ? recent : recent.filter((lead: any) => lead.signals?.geography !== 'Other');
     // Job postings found to be closed are no longer worth contacting.
     const open = includeOlder ? inRegion : inRegion.filter((lead: any) => lead.signals?.jobOpen !== false);
@@ -103,6 +117,12 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     res.json({
       leads,
       recentDays: includeOlder ? null : recentDays,
+      view: olderView ? 'older' : 'current',
+      olderWindow: { from: LEAD_MAX_AGE_DAYS, to: LEAD_ARCHIVE_DAYS },
+      // For the sidebar: leads in the Older tab (same region / closed-job rules).
+      olderCount: matching.filter(
+        (lead: any) => inOlderWindow(lead) && lead.signals?.geography !== 'Other' && lead.signals?.jobOpen !== false && checkIcp(lead).status !== 'outside'
+      ).length,
       hiddenOlder: matching.length - recent.length,
       hiddenOtherRegions: recent.length - inRegion.length,
       hiddenClosed: inRegion.length - open.length,
@@ -229,7 +249,9 @@ function withVerifiedDomain(lead: any, signals: any, domain: string | null | und
 
 // Bumped when the contact search changes, so leads searched the old way
 // (e.g. on a guessed domain that found nobody) search again.
-const CONTACT_SEARCH_VERSION = 2;
+// 3: also reads a website the lead's own text states and re-checks leads
+// that still have no confirmed website.
+const CONTACT_SEARCH_VERSION = 3;
 
 const apolloFailure = (res: Response, error: any) => {
   const status = error?.status && error.status >= 400 && error.status < 600 ? error.status : 500;
@@ -248,7 +270,9 @@ router.post('/:id/contacts/search', async (req: AuthRequest, res: Response) => {
     const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
     const { signals, saved } = apolloSignals(lead);
-    const result = await apollo.findDecisionMakers({ website: verifiedWebsite(signals), companyName: lead.companyName, lob: lead.lob });
+    // Text that may state the company's website (LinkedIn "About us", the source).
+    const statedText = [signals.company?.description, signals.requirement?.summary, signals.searchContext].filter(Boolean).join(' ');
+    const result = await apollo.findDecisionMakers({ website: verifiedWebsite(signals), companyName: lead.companyName, lob: lead.lob, statedText });
     const nextApollo = {
       ...saved,
       candidates: result.candidates,
@@ -321,6 +345,48 @@ router.post('/:id/contacts/reveal', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// LinkedIn leads: reveal the post's author by their LinkedIn profile (1 credit
+// when found; 'phone' adds phone numbers, delivered later to the webhook).
+// Apollo also returns their title and employer, which identifies the company.
+router.post('/:id/linkedin/reveal-author', async (req: AuthRequest, res: Response) => {
+  try {
+    const { type = 'email' } = req.body || {};
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const { signals, saved } = apolloSignals(lead);
+    if (signals.leadType !== 'linkedin_post') return res.status(400).json({ error: 'Not a LinkedIn lead' });
+    const profileUrl = signals.linkedinPost?.authorUrl || signals.authorProfileUrl;
+    if (!profileUrl) return res.status(400).json({ error: 'The author’s LinkedIn profile isn’t known.' });
+    const existing = saved.author;
+    if (existing && (type === 'email' || ['found', 'pending'].includes(existing.phoneStatus))) {
+      return res.json({ author: existing, alreadyRevealed: true });
+    }
+
+    let webhookUrl: string | undefined;
+    if (type === 'phone') {
+      const base = publicApiUrl(req);
+      if (!base) {
+        return res.status(400).json({ error: 'Phone numbers can only be revealed on the deployed app: Apollo sends them to a public web address.' });
+      }
+      webhookUrl = `${base}/api/leads/apollo/phone-webhook?lead=${lead.id}&person=author&token=${webhookToken(lead.id, 'author')}`;
+    }
+    const contact = await apollo.revealByLinkedIn(profileUrl, { webhookUrl });
+    if (!contact) return res.status(404).json({ error: 'Apollo has no record of this person (no credit used).' });
+    const author = { ...(existing || {}), ...contact, email: contact.email || existing?.email || null, isAuthor: true };
+    const nextSignals = {
+      ...signals,
+      apollo: { ...saved, author },
+      activity: logActivity(signals, req, 'reveal', `Revealed the post author's ${type === 'phone' ? 'email and phone' : 'email'} in Apollo`),
+    };
+    const data: any = { signals: nextSignals };
+    if (author.email) data.outreachEmail = author.email;
+    await prisma.lead.update({ where: { id: lead.id }, data });
+    res.json({ author });
+  } catch (error) {
+    apolloFailure(res, error);
+  }
+});
+
 // Apollo calls this (no login) with a revealed person's phone numbers.
 router.post('/apollo/phone-webhook', async (req: any, res: Response) => {
   try {
@@ -339,6 +405,16 @@ router.post('/apollo/phone-webhook', async (req: any, res: Response) => {
     collect(req.body);
     const person = people.find((p) => p.id === personId) || people[0];
     const phones = apollo.phonesFrom(person);
+    if (personId === 'author') {
+      const authorLead = await prisma.lead.findUnique({ where: { id: String(leadId) } });
+      if (!authorLead) return res.json({ ok: true });
+      const { signals: authorSignals, saved: authorSaved } = apolloSignals(authorLead);
+      const author = authorSaved.author
+        ? { ...authorSaved.author, phones, phone: phones[0]?.number || authorSaved.author.phone, phoneIsCompany: phones.length ? false : authorSaved.author.phoneIsCompany, phoneStatus: phones.length ? 'found' : 'none' }
+        : null;
+      if (author) await prisma.lead.update({ where: { id: authorLead.id }, data: { signals: { ...authorSignals, apollo: { ...authorSaved, author } } } });
+      return res.json({ ok: true });
+    }
 
     const lead = await prisma.lead.findUnique({ where: { id: String(leadId) } });
     if (!lead) return res.json({ ok: true });
@@ -386,6 +462,100 @@ router.post('/:id/company/enrich', async (req: AuthRequest, res: Response) => {
     res.json({ lead: withChecks(updated) });
   } catch (error) {
     apolloFailure(res, error);
+  }
+});
+
+// Free: the full public LinkedIn post behind a LinkedIn lead, structured
+// into the ask, context, requirement areas, priorities and question, with
+// author and engagement. Read once; also re-checks that the post really asks
+// for a provider (older leads were saved from search snippets only).
+router.post('/:id/linkedin/refresh', async (req: AuthRequest, res: Response) => {
+  try {
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const signals: any = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
+    if (signals.leadType !== 'linkedin_post') return res.status(400).json({ error: 'Not a LinkedIn lead' });
+    // Read once; a post that couldn't be read is retried after an hour.
+    const cached = signals.linkedinPost;
+    const retryUnreadable = cached?.unreadable && Date.now() - new Date(cached.fetchedAt).getTime() > 3600000;
+    if (cached?.fetchedAt && !retryUnreadable) return res.json({ linkedinPost: cached });
+
+    const post = await fetchLinkedInPost(signals.tavilyUrl).catch(() => null);
+    if (!post) {
+      // Still judge it on the search snippet with the current rules.
+      const check = classifyLinkedInPost(signals.tavilyUrl, signals.searchContext || '');
+      const linkedinPost = {
+        fetchedAt: new Date().toISOString(),
+        unreadable: true,
+        isRequest: !!check.ok,
+        notRequestReason: check.ok ? null : check.reason,
+      };
+      await prisma.lead.update({ where: { id: lead.id }, data: { signals: { ...signals, linkedinPost } } });
+      return res.json({ linkedinPost });
+    }
+    const check = classifyLinkedInPost(signals.tavilyUrl, post.body);
+    const linkedinPost = {
+      author: post.author,
+      authorUrl: post.authorUrl,
+      authorFollowers: post.authorFollowers,
+      likes: post.likes,
+      comments: post.comments,
+      postedAt: post.postedAt,
+      hashtags: post.hashtags,
+      isRequest: !!check.ok,
+      notRequestReason: check.ok ? null : check.reason,
+      fetchedAt: post.fetchedAt,
+    };
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        signals: {
+          ...signals,
+          linkedinPost,
+          requirement: check.ok
+            ? requirementFromPost(post)
+            : {
+                ...requirementFromPost(post),
+                summary: post.body.replace(/(\s*#[\p{L}\p{N}_]+)+\s*$/u, '').replace(/\s+/g, ' ').trim().slice(0, 900),
+                sections: [],
+                from: 'LinkedIn post (not a request)',
+              },
+          requirementChecked: true,
+          ...(post.authorUrl && !signals.authorProfileUrl ? { authorProfileUrl: post.authorUrl } : {}),
+        },
+      },
+    });
+    res.json({ linkedinPost });
+  } catch (error) {
+    console.error('LinkedIn post read failed:', (error as any)?.message);
+    res.status(502).json({ error: 'Could not read the LinkedIn post right now' });
+  }
+});
+
+// Free: the company's own description from its website (About page, then
+// homepage), for leads with a confirmed website but no real description.
+// Checked once per lead; the result and the page it came from are saved.
+router.post('/:id/company/about', async (req: AuthRequest, res: Response) => {
+  try {
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const signals: any = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
+    const company = signals.company || {};
+    const website = verifiedWebsite(signals);
+    if (!website) return res.status(400).json({ error: 'The company’s website isn’t confirmed yet.' });
+    if (company.aboutCheckedAt) return res.json({ company });
+
+    const about = await findAboutDescription(website, lead.companyName).catch(() => null);
+    const nextCompany = {
+      ...company,
+      aboutCheckedAt: new Date().toISOString(),
+      ...(about ? { description: about.description, descriptionSource: about.source } : {}),
+    };
+    await prisma.lead.update({ where: { id: lead.id }, data: { signals: { ...signals, company: nextCompany } } });
+    res.json({ company: nextCompany });
+  } catch (error) {
+    console.error('Company about failed:', (error as any)?.message);
+    res.status(502).json({ error: 'Could not read the company website right now' });
   }
 });
 

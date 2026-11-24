@@ -43,7 +43,8 @@ const EXISTING_SYSTEMS =
 
 // National / federal bodies: far larger than the ICP even though revenue doesn't apply.
 const LARGE_PUBLIC_BODY =
-  /\b(department of|ministry|federal|national|central bank|army|navy|air force|marine corps|space force|pentagon|dod|dhs|nga|nasa|nhs|\bva\b|veterans affairs|u\.?s\.? government|european commission|eu commission|government of)\b/i;
+  // "national" alone is too broad: a National Park Authority is a small local body.
+  /\b(department of|ministry|federal|national (government|security|guard|health service|police)|central bank|army|navy|air force|marine corps|space force|pentagon|dod|dhs|nga|nasa|nhs england|\bva\b|veterans affairs|u\.?s\.? government|european commission|eu commission|government of|home office|cabinet office|hm treasury|hmrc|hm revenue)\b/i;
 const PUBLIC_BODY =
   /\b(city of|county|municipal\w*|municipality|council|borough|state of|province|public works|pwd|nagar (palika|nigam)|panchayat|authority|commission|agency|school district|university|college|government|govt|port of|transit)\b/i;
 
@@ -107,7 +108,8 @@ function checkIcp(lead) {
     // The author's headline, or the snippet text before the post body starts
     // ("Jane Doe – CTO at Acme | 12 comments ..."), never the ask itself.
     const head = (signals.searchContext || '').split(/\b(looking for|seeking|can anyone|could anyone|any recommendations|does anyone|i'?m|we'?re|hi|hello)\b/i)[0].slice(0, 160);
-    const author = `${signals.authorTitle || ''} ${head}`;
+    // Title from Apollo once the author is revealed, else the snippet's headline area.
+    const author = `${signals.apollo?.author?.title || ''} ${signals.authorTitle || ''} ${head}`;
     const title = author.match(ICP_ROLE);
     role = title
       ? { status: 'match', reason: `Author appears to be ${title[0]}` }

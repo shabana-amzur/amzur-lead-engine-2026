@@ -2,7 +2,7 @@
 
 import { use } from 'react';
 import useSWR from 'swr';
-import { leadsAPI } from '@/lib/api';
+import { apolloAPI, leadsAPI } from '@/lib/api';
 import { lobBadge, lobLabel } from '@/lib/lobs';
 import { industryBadge, isPriorityIndustry } from '@/lib/industries';
 import { describeSource, isLinkedInLead } from '@/lib/sources';
@@ -14,8 +14,10 @@ import RfpPanel from '@/components/RfpPanel';
 import { CaseStudyMatch, OutreachSequence, WhyNowTimeline } from '@/components/LeadPanels';
 import ApolloContacts, { ApolloCompanyButton } from '@/components/ApolloContacts';
 import CompanyIntelligence from '@/components/CompanyIntelligence';
+import LinkedInAuthor from '@/components/LinkedInAuthor';
+import Icon from '@/components/SidebarIcon';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const FIT_STYLES: Record<string, string> = {
   'Strong fit': 'bg-emerald-50 border-emerald-200 text-emerald-900',
@@ -66,6 +68,33 @@ const linkedInPeople = (role: string, company: string) =>
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 
+// The text under the headline without the headline itself: news and tender
+// leads often have only the headline as their "summary", and a LinkedIn
+// post's text starts with the question used as the headline. Returns null
+// when nothing meaningful is left.
+function withoutHeadline(text: string | null | undefined, headline: string | null | undefined): string | null {
+  // LinkedIn page chrome such as "Mehul Patel | 37 comments".
+  let body = (text || '').replace(/^[^|]{0,60}\|\s*\d+\s+comments?\s*/i, '').trim();
+  if (!body) return null;
+  const head = (headline || '').trim();
+  const clipped = /(…|\.\.\.)$/.test(head);
+  const words = head.replace(/(…|\.\.\.)$/, '').match(/[a-z0-9]+/gi) || [];
+  if (clipped) words.pop(); // the last word of a clipped headline may be cut
+  if (words.length >= 3) {
+    // The headline wherever it appears, whatever punctuation or spacing sits between its words.
+    const pattern = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^a-z0-9]+'), 'i');
+    const match = body.match(pattern);
+    if (match && match.index !== undefined) {
+      body = `${body.slice(0, match.index)} ${body.slice(match.index + match[0].length)}`;
+    }
+  }
+  body = body
+    .replace(/\s+/g, ' ')
+    .replace(/^[^a-z0-9“"(]+/i, '')
+    .trim();
+  return body.length >= 25 ? body : null;
+}
+
 // "3 days ago", "5 months ago", "2 years ago".
 function timeAgo(iso: string) {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
@@ -84,9 +113,35 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
 
   const { data, error, mutate } = useSWR(`/api/leads/${id}`, () => leadsAPI.getById(id));
 
+  // LinkedIn leads: read the full public post once (free) for a detailed
+  // "What they need"; older leads only have the search snippet.
+  const linkedinTried = useRef(false);
+  useEffect(() => {
+    const lead = data?.lead;
+    // Not read yet, or unreadable last time (the API retries after an hour).
+    const post = lead?.signals?.linkedinPost;
+    if (!lead || lead.signals?.leadType !== 'linkedin_post' || (post && !post.unreadable) || linkedinTried.current) return;
+    linkedinTried.current = true;
+    apolloAPI
+      .linkedinRefresh(lead.id)
+      .then(() => mutate())
+      .catch(() => {});
+  }, [data, mutate]);
+
   const backButton = (
     <button
-      onClick={() => router.push('/dashboard')}
+      onClick={() => {
+        // Came from the dashboard in this tab: go back to that exact view
+        // (filters and scroll are restored). Opened directly: open the dashboard.
+        let cameFromDashboard = false;
+        try {
+          cameFromDashboard = sessionStorage.getItem('lead-engine:came-from-dashboard') === '1';
+        } catch {
+          // storage unavailable
+        }
+        if (cameFromDashboard && window.history.length > 1) router.back();
+        else router.push('/dashboard');
+      }}
       className="text-sm text-gray-600 hover:text-gray-900 font-medium"
     >
       ← Back to Dashboard
@@ -146,6 +201,11 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
     ? [requirement.headline, requirement.summary, ...(requirement.sections || []).flatMap((section) => section.bullets)].join(' ')
     : '';
 
+  // What they need: the text under the headline, without repeating it.
+  const needHeadline = requirement?.headline || lead.intentSignal || '';
+  const needSummary = withoutHeadline(requirement?.summary, needHeadline);
+  const needContext = needSummary ? null : withoutHeadline(context, needHeadline);
+
   const techMentioned = TECH_KEYWORDS.filter((tech) => {
     const escaped = tech.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(^|[^A-Za-z])${escaped}([^A-Za-z]|$)`, 'i').test(`${requirementText} ${context}`);
@@ -192,7 +252,11 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                   {lobLabel(lead.lob)}
                 </span>
                 <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${industryBadge(lead.industry || 'Other')}`}>
-                  {lead.industry || 'Other'}{isPriorityIndustry(lead.industry) ? ' ★ Priority' : ''}
+                  {lead.industry || 'Other'}{isPriorityIndustry(lead.industry) && (
+                    <span className="inline-flex items-center gap-0.5 ml-1">
+                      <Icon name="star" className="w-3 h-3 fill-current" /> Priority
+                    </span>
+                  )}
                 </span>
                 <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700">
                   {regionLabel(signals.geography || 'Unknown')}
@@ -211,7 +275,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
           <div className="flex flex-wrap gap-2 mt-5">
             {sourceUrl && (
               <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className={actionLink}>
-                📄 View original {source.type.toLowerCase()}
+                <Icon name="tender" className="w-3.5 h-3.5" /> View original {source.type.toLowerCase()}
               </a>
             )}
             {fromLinkedIn ? (
@@ -221,7 +285,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 rel="noopener noreferrer"
                 className={actionLink}
               >
-                👤 Author&apos;s LinkedIn profile
+                <Icon name="user" className="w-3.5 h-3.5" /> Author&apos;s LinkedIn profile
               </a>
             ) : (
               <a
@@ -230,12 +294,12 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 rel="noopener noreferrer"
                 className={actionLink}
               >
-                💼 {companyLinkedIn ? 'LinkedIn page' : 'Find on LinkedIn'}
+                <Icon name="briefcase" className="w-3.5 h-3.5" /> {companyLinkedIn ? 'LinkedIn page' : 'Find on LinkedIn'}
               </a>
             )}
             {!fromLinkedIn && officialWebsite && (
               <a href={officialWebsite} target="_blank" rel="noopener noreferrer" className={actionLink}>
-                🌐 Website
+                <Icon name="globe" className="w-3.5 h-3.5" /> Website
               </a>
             )}
             <a
@@ -244,7 +308,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               rel="noopener noreferrer"
               className={actionLink}
             >
-              🔎 Search the web
+              <Icon name="search" className="w-3.5 h-3.5" /> Search the web
             </a>
             <a
               href={`https://news.google.com/search?q=${encodeURIComponent(`"${company}"`)}`}
@@ -252,7 +316,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               rel="noopener noreferrer"
               className={actionLink}
             >
-              📰 Recent news
+              <Icon name="news" className="w-3.5 h-3.5" /> Recent news
             </a>
           </div>
         </div>
@@ -297,18 +361,18 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                   <span className="px-2 py-0.5 rounded-md bg-gray-100 text-gray-700 font-medium">{requirementLabel}</span>
                   {signals.vendorStatus === 'review' && (
                     <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 font-medium border border-amber-200">
-                      ⚠ Review required
+                      <span className="inline-flex items-center gap-1"><Icon name="warning" className="w-3 h-3" /> Review required</span>
                     </span>
                   )}
                   {signals.vendorStatus === 'open' && (
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-medium">✓ Open requirement</span>
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-medium"><span className="inline-flex items-center gap-1"><Icon name="check" className="w-3 h-3" /> Open requirement</span></span>
                   )}
                   {signals.jobOpen === true && (
                     <span
                       className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-medium"
                       title={signals.jobCheckedAt ? `Checked ${new Date(signals.jobCheckedAt).toLocaleString()}` : undefined}
                     >
-                      ✓ Posting still open
+                      <span className="inline-flex items-center gap-1"><Icon name="check" className="w-3 h-3" /> Posting still open</span>
                     </span>
                   )}
                   {signals.jobOpen === false && (
@@ -327,6 +391,21 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               <h3 className="text-xl font-semibold text-gray-900">
                 {requirement?.headline || lead.intentSignal || 'Requirement not recorded'}
               </h3>
+
+              {fromLinkedIn && signals.linkedinPost?.isRequest === false && (
+                <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <span className="font-medium">Not a request for a provider.</span>{' '}
+                  {{
+                    'self-promotion': 'The author is advertising their own services.',
+                    'rhetorical or second-hand': 'The author is commenting on requests (or quoting them), not making one.',
+                    'job ad / recruiting': 'This is a job ad or recruiting post.',
+                    'job ad (hiring in post URL)': 'This is a job ad or recruiting post.',
+                    'not asking for a provider': 'The post doesn’t ask for a provider.',
+                    'not asking for an Amzur service': 'The post asks for something Amzur doesn’t provide.',
+                  }[String(signals.linkedinPost.notRequestReason)] || 'The full post doesn’t read like someone asking for a provider.'}{' '}
+                  The post is shown below as written. Skip outreach unless you know otherwise.
+                </div>
+              )}
 
               {signals.vendorStatus === 'review' && (
                 <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -352,12 +431,12 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 </p>
               )}
 
-              {requirement?.summary ? (
-                <p className="mt-4 text-gray-800 leading-relaxed">{requirement.summary}</p>
-              ) : context ? (
+              {needSummary ? (
+                <p className="mt-4 text-gray-800 leading-relaxed">{needSummary}</p>
+              ) : needContext ? (
                 <div className="mt-4">
                   <p className="text-xs text-gray-400 mb-1">From the search result (may be partial):</p>
-                  <p className="text-sm text-gray-700 leading-relaxed">{context.trim()}{context.length >= 500 ? '…' : ''}</p>
+                  <p className="text-sm text-gray-700 leading-relaxed">{needContext}{context.length >= 500 ? '…' : ''}</p>
                 </div>
               ) : null}
 
@@ -365,15 +444,35 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 <div key={section.title} className="mt-4">
                   <h4 className="text-sm font-medium text-gray-700 mb-1.5">{section.title}</h4>
                   <ul className="space-y-1.5 text-sm text-gray-700">
-                    {section.bullets.map((bullet) => (
-                      <li key={bullet} className="flex gap-2">
-                        <span className="text-gray-400 mt-0.5">•</span>
-                        <span>{bullet}</span>
-                      </li>
-                    ))}
+                    {section.bullets.map((bullet) => {
+                      // "Lead & Sales Management: lead distribution, ..." -> bold label
+                      const labelled = bullet.match(/^([A-Z][^:]{2,60}):\s+(.+)$/);
+                      return (
+                        <li key={bullet} className="flex gap-2">
+                          <span className="text-gray-400 mt-0.5">•</span>
+                          {labelled ? (
+                            <span>
+                              <span className="font-medium text-gray-900">{labelled[1]}:</span> {labelled[2]}
+                            </span>
+                          ) : (
+                            <span>{bullet}</span>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               ))}
+
+              {fromLinkedIn && (requirement as any)?.hashtags?.length > 0 && (
+                <div className="mt-4 flex flex-wrap items-center gap-1.5">
+                  {(requirement as any).hashtags.slice(0, 12).map((tag: string) => (
+                    <span key={tag} className="text-xs px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+              )}
 
               {techMentioned.length > 0 && (
                 <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -430,7 +529,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                   <ul className="space-y-2 text-sm text-gray-700">
                     {brief.angles.map((angle) => (
                       <li key={angle} className="flex gap-2">
-                        <span className="text-emerald-600 mt-0.5">✓</span>
+                        <span className="text-emerald-600 mt-0.5"><Icon name="check" className="w-4 h-4" /></span>
                         <span>{angle}</span>
                       </li>
                     ))}
@@ -540,7 +639,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                           : 'bg-gray-50 text-gray-600 border border-gray-200'
                     }`}
                   >
-                    {lead.icp.status === 'match' ? '✓ Matches ICP' : lead.icp.status === 'outside' ? 'Outside ICP' : 'Unverified'}
+                    {lead.icp.status === 'match' ? 'Matches ICP' : lead.icp.status === 'outside' ? 'Outside ICP' : 'Unverified'}
                   </span>
                 </div>
                 <dl className="space-y-3 text-sm">
@@ -555,7 +654,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                           check?.status === 'match' ? 'text-emerald-600' : check?.status === 'outside' ? 'text-red-600' : 'text-gray-400'
                         }`}
                       >
-                        {check?.status === 'match' ? '✓' : check?.status === 'outside' ? '✕' : '?'}
+                        {check?.status === 'match' ? <Icon name="check" className="w-4 h-4" /> : check?.status === 'outside' ? <Icon name="x" className="w-4 h-4" /> : '?'}
                       </span>
                       <div>
                         <dt className="text-gray-900 font-medium">
@@ -577,19 +676,9 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                     <ApolloContacts lead={lead} brief={brief} onChange={() => mutate()} />
                   </div>
                 )}
-                {fromLinkedIn && (
-                  <div className="mb-3 pb-3 border-b border-gray-100 text-sm">
-                    <div className="font-medium text-gray-900">{company}</div>
-                    <div className="text-gray-500 text-xs">Asked for this service: reply to the post or message them.</div>
-                    {sourceUrl && (
-                      <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 text-sm">
-                        Open their post →
-                      </a>
-                    )}
-                    <div className="text-xs text-gray-400 mt-2">Once you know their company, these roles there may also be involved:</div>
-                  </div>
-                )}
+                {fromLinkedIn && <LinkedInAuthor lead={lead} brief={brief} onChange={() => mutate()} />}
                 {!fromLinkedIn && <div className="text-xs text-gray-400 mb-2">Roles to target{(lead.signals?.apollo?.candidates || []).length ? ' if you need others' : ''}:</div>}
+                {!fromLinkedIn && (
                 <ul className="space-y-3">
                   {brief.contacts.map(({ role, why }) => (
                     <li key={role} className="text-sm">
@@ -610,6 +699,8 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                     </li>
                   ))}
                 </ul>
+                )}
+                {!fromLinkedIn && (
                 <div className="mt-4 pt-3 border-t border-gray-100 text-sm">
                   <div className="text-gray-500 mb-1">Email</div>
                   {reliableEmail ? (
@@ -620,11 +711,10 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                       <div className="text-xs text-gray-400 mt-0.5">Guessed general inbox, not verified</div>
                     </>
                   ) : (
-                    <div className="text-gray-600">
-                      {fromLinkedIn ? 'No email: contact them through LinkedIn.' : 'No reliable email yet. Use the LinkedIn links above.'}
-                    </div>
+                    <div className="text-gray-600">No reliable email yet. Use the LinkedIn links above.</div>
                   )}
                 </div>
+                )}
               </section>
 
             <section className="bg-white border border-gray-200 rounded-lg p-5">
@@ -656,9 +746,18 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
             {fromLinkedIn && (
               <section className="bg-white border border-gray-200 rounded-lg p-5">
                 <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Company</h2>
-                <p className="text-sm text-gray-600">
-                  Not identified yet. Open the author&apos;s LinkedIn profile to see where they work.
-                </p>
+                {signals.apollo?.author?.organization ? (
+                  <p className="text-sm text-gray-800">
+                    {signals.apollo.author.name || company} works at{' '}
+                    <span className="font-medium">{signals.apollo.author.organization}</span>
+                    {signals.apollo.author.title ? ` as ${signals.apollo.author.title}` : ''}.
+                    <span className="block text-xs text-gray-400 mt-1">From Apollo, matched by their LinkedIn profile.</span>
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-600">
+                    Not identified yet. Reveal the author&apos;s email above to see their title and employer, or open their LinkedIn profile.
+                  </p>
+                )}
               </section>
             )}
 

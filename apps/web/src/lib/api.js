@@ -122,6 +122,13 @@ export const apolloAPI = {
   revealContact: async (leadId, personId, type = 'email') =>
     fetchAPI(`/api/leads/${leadId}/contacts/reveal`, { method: 'POST', body: JSON.stringify({ personId, type }) }),
   enrichCompany: async (leadId) => fetchAPI(`/api/leads/${leadId}/company/enrich`, { method: 'POST' }),
+  // LinkedIn leads: the post's author by their LinkedIn profile ('email': 1 credit; 'phone': more).
+  revealAuthor: async (leadId, type = 'email') =>
+    fetchAPI(`/api/leads/${leadId}/linkedin/reveal-author`, { method: 'POST', body: JSON.stringify({ type }) }),
+  // Free: the full public LinkedIn post behind a LinkedIn lead, read once.
+  linkedinRefresh: async (leadId) => fetchAPI(`/api/leads/${leadId}/linkedin/refresh`, { method: 'POST' }),
+  // Free: the company's own description from its website (About page), read once.
+  companyAbout: async (leadId) => fetchAPI(`/api/leads/${leadId}/company/about`, { method: 'POST' }),
   // Free: recent news about the company (cached for a day).
   companyNews: async (leadId) => fetchAPI(`/api/leads/${leadId}/company/news`),
   // The team's Apollo sequences and sending mailboxes (free).

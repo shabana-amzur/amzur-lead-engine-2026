@@ -79,6 +79,74 @@
       ]
     },
     {
+      "name": "Food & Beverage Manufacturing",
+      "priority": true,
+      "keywords": [
+        "food manufacturing",
+        "food manufacturer",
+        "food processing",
+        "food processor",
+        "food production",
+        "food and beverage",
+        "food & beverage",
+        "f&b",
+        "beverage",
+        "beverages",
+        "beverage company",
+        "brewery",
+        "brewing",
+        "distillery",
+        "winery",
+        "dairy",
+        "bakery",
+        "baked goods",
+        "snack",
+        "snacks",
+        "confectionery",
+        "chocolate",
+        "meat processing",
+        "poultry",
+        "seafood",
+        "frozen food",
+        "packaged food",
+        "bottling",
+        "co-packer",
+        "co-manufacturer",
+        "haccp",
+        "fsma",
+        "food safety",
+        "ingredients",
+        "coffee roaster",
+        "coffee roasting",
+        "juice",
+        "fruit"
+      ]
+    },
+    {
+      "name": "Retail & Consumer",
+      "priority": true,
+      "keywords": [
+        "retail",
+        "retailer",
+        "e-commerce",
+        "ecommerce",
+        "consumer brand",
+        "apparel",
+        "footwear",
+        "grocery",
+        "restaurant",
+        "hospitality",
+        "nutrition",
+        "cpg",
+        "direct-to-consumer",
+        "dtc",
+        "omnichannel",
+        "point of sale",
+        "merchandising",
+        "shopify"
+      ]
+    },
+    {
       "name": "Financial Services",
       "priority": false,
       "keywords": [
@@ -114,26 +182,6 @@
         "semiconductor",
         "plant operations",
         "production line"
-      ]
-    },
-    {
-      "name": "Retail & Consumer",
-      "priority": false,
-      "keywords": [
-        "retail",
-        "retailer",
-        "e-commerce",
-        "ecommerce",
-        "consumer brand",
-        "apparel",
-        "footwear",
-        "grocery",
-        "restaurant",
-        "hospitality",
-        "nutrition",
-        "cpg",
-        "direct-to-consumer",
-        "dtc"
       ]
     },
     {

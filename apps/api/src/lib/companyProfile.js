@@ -66,6 +66,18 @@ function parseCompanySize(text) {
   return { employees: Math.round((low + high) / 2), range: match[2] ? `${match[1]}–${match[2]}` : `${match[1]}+` };
 }
 
+// Drop page chrome such as "About us ;" and "Website: …" from a description;
+// null when nothing meaningful is left.
+function cleanDescription(text) {
+  const clean = (text || '')
+    .replace(/\babout us\b\s*[;:,.\-]*/gi, ' ')
+    .replace(/\bwebsite\s*[:\-]?\s*\S+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s;:,.\-]+|[\s;:,\-]+$/g, '')
+    .trim();
+  return clean.length >= 30 ? clean : null;
+}
+
 // Keep descriptions short: up to two sentences / ~300 characters.
 function shorten(text) {
   if (!text) return null;
@@ -241,6 +253,11 @@ async function findCompanyProfile(companyName, hints = {}) {
     founded: pick('founded'),
     revenue: pick('revenue'),
   };
+  // A LinkedIn "About us" can be just "Website: https://example.com": use the
+  // site and don't show the leftover text as the description.
+  const stated = (profile.description || '').match(/\bwebsite\s*[:\-]?\s*((?:https?:\/\/)?(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+)/i);
+  if (stated && !profile.website && !NOT_OFFICIAL.test(stated[1])) profile.website = toUrl(stated[1]);
+  profile.description = cleanDescription(profile.description);
   if (!profile.website && !profile.linkedinUrl && !profile.description) return null;
   return { ...profile, source: `Public company profile / LinkedIn (via ${provider})` };
 }

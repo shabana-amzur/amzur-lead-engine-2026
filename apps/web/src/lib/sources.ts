@@ -46,6 +46,12 @@ export function describeSource(url?: string): LeadSource {
   if (news) {
     return { type: 'Press release', where: news, meaning: 'Announced in the news. Check that the company is the one buying, not selling.' };
   }
+  if (host.endsWith('contractsfinder.service.gov.uk')) {
+    return { type: 'Government RFP', where: 'UK Contracts Finder', meaning: 'An official open call for tender from a UK public buyer.' };
+  }
+  if (host.endsWith('ted.europa.eu')) {
+    return { type: 'Government RFP', where: 'EU TED', meaning: 'An official open call for tender from an EU public buyer.' };
+  }
   if (host.endsWith('sam.gov')) {
     return { type: 'Government RFP', where: 'SAM.gov', meaning: 'A public request for proposals: an open buying opportunity.' };
   }

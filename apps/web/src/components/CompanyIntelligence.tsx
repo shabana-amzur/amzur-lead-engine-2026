@@ -3,7 +3,7 @@
 // Company intelligence for one lead: the public profile found during the scan,
 // Apollo's company record (size, growth, team sizes, funding, technology stack;
 // 1 credit, on click) and recent news (free, cached for a day).
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { apolloAPI } from '@/lib/api';
 import { hostname } from '@/lib/sources';
@@ -34,6 +34,17 @@ const growthText = (value: number | null | undefined) =>
   value === null || value === undefined ? null : `${value > 0 ? '+' : ''}${value}%`;
 const growthClass = (value: number | null | undefined) =>
   value === null || value === undefined ? 'text-gray-400' : value > 0 ? 'text-emerald-700' : value < 0 ? 'text-red-700' : 'text-gray-700';
+
+// Drop page chrome such as "About us ;" and "Website: …" (older profiles stored it).
+function cleanDescription(text?: string | null): string | null {
+  const clean = (text || '')
+    .replace(/\babout us\b\s*[;:,.\-]*/gi, ' ')
+    .replace(/\bwebsite\s*[:\-]?\s*\S+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s;:,.\-]+|[\s;:,\-]+$/g, '')
+    .trim();
+  return clean.length >= 30 ? clean : null;
+}
 
 const formatDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '';
@@ -77,7 +88,23 @@ export default function CompanyIntelligence({ lead, onChange }: { lead: any; onC
 
   const website = intel?.website || profile.website || null;
   const linkedin = intel?.linkedinUrl || profile.linkedinUrl || null;
-  const description = intel?.description || profile.description || null;
+  const description = intel?.description || cleanDescription(profile.description);
+
+  // No real description yet but a confirmed website: read the company's own
+  // About page (free, once per lead).
+  const aboutTried = useRef(false);
+  const [readingAbout, setReadingAbout] = useState(false);
+  useEffect(() => {
+    if (description || !profile.website || profile.aboutCheckedAt || aboutTried.current) return;
+    aboutTried.current = true;
+    setReadingAbout(true);
+    apolloAPI
+      .companyAbout(lead.id)
+      .then(() => onChange())
+      .catch(() => {})
+      .finally(() => setReadingAbout(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [description, profile.website, profile.aboutCheckedAt, lead.id]);
   const revenue = intel?.revenuePrinted ? `$${intel.revenuePrinted}` : lead.revenue ? `~$${Math.round(lead.revenue / 1e6)}M` : null;
   const websiteSource: Source = intel?.website ? 'apollo' : profile.websiteSource ? 'confirmed' : 'profile';
   const employeeSource: Source = intel?.employees ? 'apollo' : profile.employees ? 'profile' : 'estimate';
@@ -121,7 +148,25 @@ export default function CompanyIntelligence({ lead, onChange }: { lead: any; onC
       </div>
       {error && <p className="text-xs text-red-600 mb-2">{error}</p>}
 
-      {description ? <p className="text-gray-800 leading-relaxed">{description}</p> : <p className="text-sm text-gray-500">No company description found yet.</p>}
+      {description ? (
+        <div>
+          <p className="text-gray-800 leading-relaxed">{description}</p>
+          {!intel?.description && profile.descriptionSource && (
+            <p className="text-xs text-gray-400 mt-1">
+              From the company&apos;s website:{' '}
+              <a href={profile.descriptionSource} target="_blank" rel="noopener noreferrer" className="hover:text-blue-700">
+                {profile.descriptionSource.replace(/^https?:\/\/(www\.)?/, '')} ↗
+              </a>
+            </p>
+          )}
+        </div>
+      ) : readingAbout ? (
+        <p className="text-sm text-gray-500">Reading the company&apos;s About page…</p>
+      ) : (
+        <p className="text-sm text-gray-500">
+          No company description found yet{profile.aboutCheckedAt ? ' (the website has no readable About page)' : ''}.
+        </p>
+      )}
 
       <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 mt-4">
         <Fact label="Website" source={website ? websiteSource : undefined}>

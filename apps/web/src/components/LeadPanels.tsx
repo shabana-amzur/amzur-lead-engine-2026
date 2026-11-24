@@ -4,6 +4,7 @@
 // matching case studies and the activity log with notes.
 import { useState } from 'react';
 import { leadsAPI } from '@/lib/api';
+import Icon from '@/components/SidebarIcon';
 import type { Brief, TimelineEvent } from '@/lib/leadBrief';
 import type { CaseStudy } from '@/lib/caseStudies';
 
@@ -136,8 +137,10 @@ export function CaseStudyMatch({ matches }: { matches: { study: CaseStudy; reaso
         </ul>
       ) : (
         <p className="text-xs text-gray-500">
-          No matching case study yet. Add Amzur&apos;s approved case studies to <code className="font-mono">apps/web/src/lib/caseStudies.ts</code> and
-          the closest one will show here for each lead.
+          None of Amzur&apos;s published case studies is a close match for this lead&apos;s service line.{' '}
+          <a href="https://amzur.com/case-studies/" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
+            Browse all case studies ↗
+          </a>
         </p>
       )}
     </div>
@@ -145,14 +148,14 @@ export function CaseStudyMatch({ matches }: { matches: { study: CaseStudy; reaso
 }
 
 const ACTIVITY_ICON: Record<string, string> = {
-  status: '🔁',
-  owner: '👤',
-  next_action: '📌',
-  note: '📝',
-  reveal: '🔓',
-  enrich: '🏢',
-  sequence: '✉️',
-  rfp: '📋',
+  status: 'refresh',
+  owner: 'user',
+  next_action: 'flag',
+  note: 'note',
+  reveal: 'unlock',
+  enrich: 'briefcase',
+  sequence: 'mail',
+  rfp: 'tender',
 };
 
 export function ActivityLog({ lead, onChange }: { lead: any; onChange: () => void }) {
@@ -197,7 +200,7 @@ export function ActivityLog({ lead, onChange }: { lead: any; onChange: () => voi
         <ul className="space-y-2.5 max-h-80 overflow-y-auto">
           {activity.map((item, i) => (
             <li key={`${item.at}-${i}`} className="flex gap-2 text-sm">
-              <span className="shrink-0">{ACTIVITY_ICON[item.type] || '•'}</span>
+              <span className="shrink-0 text-gray-400 mt-0.5"><Icon name={ACTIVITY_ICON[item.type] || 'list'} className="w-3.5 h-3.5" /></span>
               <div className="min-w-0">
                 <div className={`text-gray-800 ${item.type === 'note' ? 'whitespace-pre-wrap' : ''}`}>{item.detail}</div>
                 <div className="text-[11px] text-gray-400">

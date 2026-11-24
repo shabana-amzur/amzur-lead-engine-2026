@@ -232,4 +232,4 @@ async function classifyVendorIntent(item = {}) {
   return result;
 }
 
-module.exports = { classifyVendorIntent, ruleVendorIntent, headlineShowsVendorChosen };
+module.exports = { classifyVendorIntent, ruleVendorIntent, headlineShowsVendorChosen, TECHNOLOGY };

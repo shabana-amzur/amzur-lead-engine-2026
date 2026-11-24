@@ -6,12 +6,15 @@ import { Response } from 'express';
 const router = Router();
 
 // Lead scans spend paid web-search credits (Tavily / Serper / You.com), so
-// they run at most ONCE PER CALENDAR DAY, whatever triggers them: the first
-// dashboard visit of the day runs it; later visits, the Refresh Results button
-// and /run just reload the saved leads. The day follows SCAN_TIMEZONE
-// (default Asia/Kolkata). Set ALLOW_EXTRA_SCANS=true to lift the limit.
+// per calendar day there is ONE full scan (the first dashboard visit of the
+// day) and ONE LinkedIn-only refresh, at least LINKEDIN_REFRESH_HOURS
+// (default 12) after the full scan, so fresh LinkedIn posts are caught the
+// same day. Any other visit, Refresh Results or /run just reloads the saved
+// leads. The day follows SCAN_TIMEZONE (default Asia/Kolkata). Set
+// ALLOW_EXTRA_SCANS=true to lift the limit.
 const SCAN_TIMEZONE = process.env.SCAN_TIMEZONE || 'Asia/Kolkata';
 const ALLOW_EXTRA_SCANS = process.env.ALLOW_EXTRA_SCANS === 'true';
+const LINKEDIN_REFRESH_HOURS = Math.max(1, parseInt(process.env.LINKEDIN_REFRESH_HOURS || '12', 10) || 12);
 // A scan that started this recently and hasn't completed is assumed to still be running.
 const IN_PROGRESS_WINDOW_MINUTES = 5;
 
@@ -20,25 +23,36 @@ const scanDay = (date: Date) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: SCAN_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 
 /**
- * Whether a scan may run now. Today's scan counts once it completed, or while
- * it may still be running; one that crashed part-way doesn't use up the day.
+ * Whether a scan may run now, and which: 'full' (first of the day) or
+ * 'linkedin' (the afternoon LinkedIn refresh). Scans count once completed, or
+ * while they may still be running; one that crashed part-way doesn't count.
  */
-async function dailyScanGate() {
+async function dailyScanGate(): Promise<
+  { allowed: true; mode: 'full' | 'linkedin' } | { allowed: false; status: string; lastScanAt: Date }
+> {
   const latest = await prisma.scanRun.findFirst({ orderBy: { startedAt: 'desc' } });
-  if (!latest) return { allowed: true as const };
+  if (!latest) return { allowed: true, mode: 'full' };
   const minutesSinceStart = (Date.now() - new Date(latest.startedAt).getTime()) / 60000;
   if (!latest.completedAt && minutesSinceStart < IN_PROGRESS_WINDOW_MINUTES) {
-    return { allowed: false as const, status: 'in_progress', lastScanAt: latest.startedAt };
+    return { allowed: false, status: 'in_progress', lastScanAt: latest.startedAt };
   }
-  if (ALLOW_EXTRA_SCANS) return { allowed: true as const };
-  const ranToday = await prisma.scanRun.findFirst({
+  if (ALLOW_EXTRA_SCANS) return { allowed: true, mode: 'full' };
+
+  const recent = await prisma.scanRun.findMany({
     where: { completedAt: { not: null }, startedAt: { gte: new Date(Date.now() - 36 * 3600000) } },
     orderBy: { startedAt: 'desc' },
   });
-  if (ranToday && scanDay(ranToday.startedAt) === scanDay(new Date())) {
-    return { allowed: false as const, status: 'skipped', lastScanAt: ranToday.startedAt };
-  }
-  return { allowed: true as const };
+  const today = scanDay(new Date());
+  const todays = recent.filter((scan) => scanDay(scan.startedAt) === today);
+  const modeOf = (scan: any) => (scan.sources && scan.sources.__mode === 'linkedin' ? 'linkedin' : 'full');
+  const fullToday = todays.find((scan) => modeOf(scan) === 'full');
+  if (!fullToday) return { allowed: true, mode: 'full' };
+
+  const linkedinToday = todays.some((scan) => modeOf(scan) === 'linkedin');
+  const hoursSinceLast = (Date.now() - new Date(todays[0].startedAt).getTime()) / 3600000;
+  if (!linkedinToday && hoursSinceLast >= LINKEDIN_REFRESH_HOURS) return { allowed: true, mode: 'linkedin' };
+
+  return { allowed: false, status: 'skipped', lastScanAt: todays[0].startedAt };
 }
 
 const skippedResponse = (gate: any) => ({
@@ -59,7 +73,7 @@ router.post('/run', authenticateToken, async (req: AuthRequest, res: Response) =
     const { discoverLeads } = await import('../services/discoveryEngine.js');
     // Run to completion before responding: on Vercel, work left running
     // after the response is sent gets frozen and never finishes.
-    const summary = await discoverLeads();
+    const summary = await discoverLeads({ mode: gate.mode });
     console.log('Discovery completed:', summary);
 
     res.json({
@@ -80,14 +94,15 @@ router.post('/refresh', async (req, res: Response) => {
     const gate = await dailyScanGate();
     if (!gate.allowed) return res.json(skippedResponse(gate));
 
-    console.log('🔄 Daily lead discovery scan');
+    console.log(`🔄 Lead discovery (${gate.mode === 'linkedin' ? 'afternoon LinkedIn refresh' : 'daily scan'})`);
     const { discoverLeads } = await import('../services/discoveryEngine.js');
-    const summary = await discoverLeads();
+    const summary = await discoverLeads({ mode: gate.mode });
     if (summary.searchUnavailable) {
       return res.json({ status: 'search_unavailable', newLeadsFound: 0, error: summary.searchUnavailable, summary });
     }
     res.json({
       status: 'completed',
+      mode: gate.mode,
       newLeadsFound: summary.newLeadsFound,
       webSearchUnavailable: summary.webSearchUnavailable || null,
       summary,

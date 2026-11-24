@@ -35,15 +35,20 @@ function classifyIndustry(text, companyName = '') {
 
 async function main() {
   const leads = await prisma.lead.findMany({
-    where: { OR: [{ industry: null }, { industry: 'Technology' }] },
+    // Also re-check leads filed under industries that F&B manufacturing was split
+    // from (or none): only a move to F&B is applied for those.
+    where: { OR: [{ industry: null }, { industry: 'Technology' }, { industry: 'Manufacturing' }, { industry: 'Retail & Consumer' }, { industry: 'Other' }] },
     select: { id: true, companyName: true, industry: true, leadScore: true, signals: true },
   });
 
   const changes = [];
   for (const lead of leads) {
     const context = lead.signals && typeof lead.signals === 'object' ? lead.signals.searchContext || '' : '';
-    const industry = classifyIndustry(`${lead.companyName} ${context}`, lead.companyName);
+    const title = lead.signals && typeof lead.signals === 'object' ? lead.signals.sourceTitle || '' : '';
+    const industry = classifyIndustry(`${lead.companyName} ${title} ${context}`, lead.companyName);
     if (industry === lead.industry) continue;
+    const reclassifyAny = lead.industry == null || lead.industry === 'Technology';
+    if (!reclassifyAny && industry !== 'Food & Beverage Manufacturing') continue;
     const boost = priorityIndustries.has(industry) ? industryConfig.priorityBoost : 0;
     const leadScore = lead.leadScore == null ? lead.leadScore : Math.min(99, lead.leadScore + boost);
     changes.push({ id: lead.id, companyName: lead.companyName, industry, leadScore });

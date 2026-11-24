@@ -1,11 +1,16 @@
 // Re-check saved LinkedIn-post leads with the current rules
 // (src/lib/linkedinFilters.js) and delete those that are job ads, recruiting
-// or self-promotion rather than someone asking to buy a service.
+// or self-promotion (e.g. a freelancer or agency advertising) rather than
+// someone asking to buy a service. Each post is judged on its full public
+// text when it can be read (free), else on the search snippet.
 // Safe to run repeatedly. DRY_RUN=1 lists what would be deleted.
 const path = require('node:path');
 const { PrismaClient } = require('@prisma/client');
 const { classifyLinkedInPost } = require(path.join(__dirname, '..', 'src', 'lib', 'linkedinFilters.js'));
 const { findRequirementDetails } = require(path.join(__dirname, '..', 'src', 'lib', 'requirementDetails.js'));
+const { fetchLinkedInPost, requirementFromPost } = require(path.join(__dirname, '..', 'src', 'lib', 'linkedinPost.js'));
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Author name from the post text, e.g. "Mehul Patel | 37 comments ..." or "Mehul Patel's Post ...".
 function authorFromText(text) {
@@ -23,21 +28,49 @@ async function main() {
   const invalid = [];
   const valid = [];
   for (const lead of linkedInLeads) {
-    const verdict = classifyLinkedInPost(lead.signals.tavilyUrl, lead.signals.searchContext || '');
-    if (!verdict.ok) invalid.push({ ...lead, reason: verdict.reason });
-    else valid.push(lead);
+    // The full public post when it can be read: snippets hide job ads and adverts.
+    const post = await fetchLinkedInPost(lead.signals.tavilyUrl).catch(() => null);
+    await pause(400);
+    const verdict = classifyLinkedInPost(lead.signals.tavilyUrl, post ? post.body : lead.signals.searchContext || '');
+    if (!verdict.ok) invalid.push({ ...lead, reason: `${verdict.reason}${post ? '' : ' (from the snippet)'}` });
+    else valid.push({ ...lead, post });
   }
 
-  // Refresh the headline (the actual request) and author name of the ones we keep.
+  // Refresh the requirement (the actual request, in full where readable) and
+  // author name of the ones we keep.
   if (!dryRun) {
     for (const lead of valid) {
-      const requirement = await findRequirementDetails(lead.signals.tavilyUrl, { text: lead.signals.searchContext });
-      const author = authorFromText(lead.signals.searchContext);
+      const { post } = lead;
+      const requirement = post
+        ? requirementFromPost(post)
+        : await findRequirementDetails(lead.signals.tavilyUrl, { text: lead.signals.searchContext });
+      const author = (post && post.author) || authorFromText(lead.signals.searchContext);
       await prisma.lead.update({
         where: { id: lead.id },
         data: {
           ...(author && author.includes(' ') ? { companyName: author } : {}),
-          signals: { ...lead.signals, requirement, requirementChecked: true, ...(author ? { author } : {}) },
+          signals: {
+            ...lead.signals,
+            requirement,
+            requirementChecked: true,
+            ...(author ? { author } : {}),
+            ...(post
+              ? {
+                  linkedinPost: {
+                    author: post.author,
+                    authorUrl: post.authorUrl,
+                    authorFollowers: post.authorFollowers,
+                    likes: post.likes,
+                    comments: post.comments,
+                    postedAt: post.postedAt,
+                    hashtags: post.hashtags,
+                    isRequest: true,
+                    notRequestReason: null,
+                    fetchedAt: post.fetchedAt,
+                  },
+                }
+              : {}),
+          },
         },
       });
     }

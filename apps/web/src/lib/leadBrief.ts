@@ -7,6 +7,7 @@
 // line with Amzur's real offerings; it is the only place the brief makes
 // claims about Amzur.
 import { lobLabel } from '@/lib/lobs';
+import { isPriorityIndustry } from '@/lib/industries';
 import { isLinkedInLead } from '@/lib/sources';
 
 // ---------------------------------------------------------------- themes ----
@@ -182,6 +183,10 @@ const INDUSTRY_NOTES: Record<string, { angle: string; watch: string }> = {
   'Financial Services': {
     angle: 'Financial-services buyers prioritise risk, auditability and data security. Show controlled delivery, access management and audit trails.',
     watch: 'Vendor risk assessments (SOC 2, data residency) are usually required.',
+  },
+  'Food & Beverage Manufacturing': {
+    angle: 'F&B manufacturers care about lot traceability, food safety (HACCP / FSMA), shelf life, recipe and BOM control, and plant-floor visibility. Lead with ERP / WMS and production-line integration that makes recalls and audits fast.',
+    watch: 'Plant shutdown windows, seasonal peaks and food-safety audits drive timing; involve quality and operations, not only IT.',
   },
   Manufacturing: {
     angle: 'Manufacturers respond to plant-floor and supply-chain outcomes: inventory accuracy, production visibility, ERP-to-shop-floor integration.',
@@ -392,7 +397,7 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
   else if (themes.length === 1) reasons.push(`Need maps to Amzur’s ${themeLabels[0]} capability`);
   if (region !== 'Unknown' && region !== 'Other') { points += 1; reasons.push(`In a target region (${region})`); }
   if (postedDays !== null && postedDays <= 10) { points += 1; reasons.push(`Fresh: posted ${postedDays === 0 ? 'today' : `${postedDays} day${postedDays === 1 ? '' : 's'} ago`}`); }
-  if (industry === 'Healthcare' || industry === 'Energy') reasons.push(`${industry} is a priority industry for Amzur`);
+  if (isPriorityIndustry(industry)) reasons.push(`${industry === 'Retail & Consumer' ? 'Retail' : industry} is a priority industry for Amzur`);
   if (review) { points -= 2; reasons.push('Vendor status unclear: needs confirming'); }
   const icp = lead.icp;
   if (icp?.status === 'match') { points += 1; reasons.push('Matches ICP ($10M–$200M revenue, established business)'); }
@@ -545,7 +550,14 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
   if (kind === 'job' && postedDays !== null && postedDays > 30) risks.push('Job posted over a month ago: the role may be filled.');
   if (kind === 'job') risks.push('Some teams prefer employees over contractors. Lead with flexibility and speed rather than cost.');
   if (kind === 'rfp') risks.push('Public tenders are often price-driven with strict eligibility. Confirm Amzur qualifies before committing effort.');
-  if (kind === 'linkedin') risks.push('The company isn’t identified yet, and other vendors will reply to the same post. Speed and relevance matter.');
+  if (kind === 'linkedin') {
+    const comments = s.linkedinPost?.comments;
+    risks.push(
+      typeof comments === 'number' && comments >= 30
+        ? `A busy post (${comments.toLocaleString('en-US')} comments): many vendors have likely replied already. Stand out with a specific answer to their listed needs, then message them directly.`
+        : 'The company isn’t identified yet, and other vendors will reply to the same post. Speed and relevance matter.'
+    );
+  }
   if (region === 'Unknown') risks.push('Location unknown: confirm the buyer is in a region Amzur serves.');
   if (industry && INDUSTRY_NOTES[industry]) risks.push(INDUSTRY_NOTES[industry].watch);
   if (!profile.website && kind !== 'linkedin') risks.push('No verified company website or profile yet. Check the company before outreach.');
