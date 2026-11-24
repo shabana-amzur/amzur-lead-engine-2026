@@ -104,9 +104,9 @@ export default function DashboardPage() {
   // Fetch scan history
   const { data: historyData, mutate: refreshHistory } = useSWR('/api/scan/history', () => scanAPI.getHistory({ limit: 5 }));
 
-  // Page load: scan only if the last scan was over an hour ago (API decides).
-  // "Refresh Results": always scan. Existing leads show immediately; new ones
-  // are added when the scan finishes.
+  // Scans spend paid search credits, so the API runs at most one per day: the
+  // first visit of the day scans; later visits and "Refresh Results" reload
+  // the saved leads. Existing leads show immediately either way.
   const [checking, setChecking] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState('');
   const checkingRef = useRef(false);
@@ -130,7 +130,7 @@ export default function DashboardPage() {
         );
       } else if (result.status === 'skipped') {
         const last = new Date(result.lastScanAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        setRefreshMessage(`Last checked at ${last}. Click Refresh Results to check for new leads now.`);
+        setRefreshMessage(`Leads were refreshed today at ${last}. New leads are searched once a day; the next search runs tomorrow.`);
       } else if (result.status === 'search_unavailable') {
         setRefreshMessage(
           result.error?.status === 432
@@ -270,7 +270,7 @@ export default function DashboardPage() {
             </div>
           )}
           <div className="text-[10px] text-gray-400 ml-5">
-            Runs on every refresh
+            Searches once a day
           </div>
         </div>
       </div>

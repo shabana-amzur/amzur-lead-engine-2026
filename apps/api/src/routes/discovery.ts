@@ -5,14 +5,58 @@ import { Response } from 'express';
 
 const router = Router();
 
-// Trigger manual lead discovery scan (protected route)
+// Lead scans spend paid web-search credits (Tavily / Serper / You.com), so
+// they run at most ONCE PER CALENDAR DAY, whatever triggers them: the first
+// dashboard visit of the day runs it; later visits, the Refresh Results button
+// and /run just reload the saved leads. The day follows SCAN_TIMEZONE
+// (default Asia/Kolkata). Set ALLOW_EXTRA_SCANS=true to lift the limit.
+const SCAN_TIMEZONE = process.env.SCAN_TIMEZONE || 'Asia/Kolkata';
+const ALLOW_EXTRA_SCANS = process.env.ALLOW_EXTRA_SCANS === 'true';
+// A scan that started this recently and hasn't completed is assumed to still be running.
+const IN_PROGRESS_WINDOW_MINUTES = 5;
+
+// Calendar day (YYYY-MM-DD) of a moment in the scan timezone.
+const scanDay = (date: Date) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: SCAN_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+
+/**
+ * Whether a scan may run now. Today's scan counts once it completed, or while
+ * it may still be running; one that crashed part-way doesn't use up the day.
+ */
+async function dailyScanGate() {
+  const latest = await prisma.scanRun.findFirst({ orderBy: { startedAt: 'desc' } });
+  if (!latest) return { allowed: true as const };
+  const minutesSinceStart = (Date.now() - new Date(latest.startedAt).getTime()) / 60000;
+  if (!latest.completedAt && minutesSinceStart < IN_PROGRESS_WINDOW_MINUTES) {
+    return { allowed: false as const, status: 'in_progress', lastScanAt: latest.startedAt };
+  }
+  if (ALLOW_EXTRA_SCANS) return { allowed: true as const };
+  const ranToday = await prisma.scanRun.findFirst({
+    where: { completedAt: { not: null }, startedAt: { gte: new Date(Date.now() - 36 * 3600000) } },
+    orderBy: { startedAt: 'desc' },
+  });
+  if (ranToday && scanDay(ranToday.startedAt) === scanDay(new Date())) {
+    return { allowed: false as const, status: 'skipped', lastScanAt: ranToday.startedAt };
+  }
+  return { allowed: true as const };
+}
+
+const skippedResponse = (gate: any) => ({
+  status: gate.status,
+  newLeadsFound: 0,
+  lastScanAt: gate.lastScanAt,
+  dailyLimit: true,
+  timezone: SCAN_TIMEZONE,
+});
+
+// Trigger a lead discovery scan (protected route). Subject to the daily limit.
 router.post('/run', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
+    const gate = await dailyScanGate();
+    if (!gate.allowed) return res.json({ message: 'Leads were already refreshed today', ...skippedResponse(gate) });
     console.log('🚀 Manual lead discovery triggered by:', req.user?.email);
-    
-    // Dynamically import the discovery service
+
     const { discoverLeads } = await import('../services/discoveryEngine.js');
-    
     // Run to completion before responding: on Vercel, work left running
     // after the response is sent gets frozen and never finishes.
     const summary = await discoverLeads();
@@ -29,41 +73,14 @@ router.post('/run', authenticateToken, async (req: AuthRequest, res: Response) =
   }
 });
 
-// Dashboard refresh. Opening the dashboard scans only if the last scan was
-// at least SCAN_COOLDOWN_MINUTES ago (default 60); clicking "Refresh Results"
-// sends { force: true } and always scans. Each scan costs search credits, so
-// automatic page loads must not trigger one every time. Public route (the
-// dashboard has no login).
-const REFRESH_COOLDOWN_MINUTES = parseInt(process.env.SCAN_COOLDOWN_MINUTES || '60', 10);
-// A scan that started this recently and hasn't completed is assumed to still be running.
-const IN_PROGRESS_WINDOW_MINUTES = 5;
-
+// Dashboard refresh: the first visit of the day scans; after that it only
+// reports today's scan. Public route (the dashboard has no login).
 router.post('/refresh', async (req, res: Response) => {
   try {
-    const force = req.body?.force === true;
-    const latest = await prisma.scanRun.findFirst({ orderBy: { startedAt: 'desc' } });
+    const gate = await dailyScanGate();
+    if (!gate.allowed) return res.json(skippedResponse(gate));
 
-    if (latest) {
-      const minutesSinceStart = (Date.now() - new Date(latest.startedAt).getTime()) / 60000;
-
-      if (!latest.completedAt && minutesSinceStart < IN_PROGRESS_WINDOW_MINUTES) {
-        return res.json({ status: 'in_progress', newLeadsFound: 0 });
-      }
-
-      if (!force && REFRESH_COOLDOWN_MINUTES > 0 && latest.completedAt && minutesSinceStart < REFRESH_COOLDOWN_MINUTES) {
-        const nextScanAt = new Date(
-          new Date(latest.startedAt).getTime() + REFRESH_COOLDOWN_MINUTES * 60000
-        );
-        return res.json({
-          status: 'skipped',
-          newLeadsFound: 0,
-          lastScanAt: latest.startedAt,
-          nextScanAt,
-        });
-      }
-    }
-
-    console.log('🔄 Dashboard refresh triggered lead discovery');
+    console.log('🔄 Daily lead discovery scan');
     const { discoverLeads } = await import('../services/discoveryEngine.js');
     const summary = await discoverLeads();
     if (summary.searchUnavailable) {
