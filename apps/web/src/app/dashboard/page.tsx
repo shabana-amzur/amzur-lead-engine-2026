@@ -160,7 +160,7 @@ export default function DashboardPage() {
   // Calculate metrics
   const totalLeads = leads.length;
   // Review-required leads aren't qualified yet, so they never count as high intent.
-  const highIntentLeads = leads.filter((l: any) => l.leadScore >= 80 && vendorStatus(l) !== 'review').length;
+  const highIntentLeads = leads.filter((l: any) => l.leadScore >= 75 && vendorStatus(l) !== 'review').length;
   const tenders = leads.filter((l: any) => signalType(l) === 'Tender / RFP').length;
   const hiringCompanies = leads.filter((l: any) => signalType(l) === 'Hiring').length;
 
@@ -173,8 +173,8 @@ export default function DashboardPage() {
     leads.filter((lead: any) => matchesFilters(lead, { ...filters, [key]: value })).length;
 
   const getScoreClass = (score: number) => {
-    if (score >= 80) return 'bg-emerald-100 text-emerald-800';
-    if (score >= 65) return 'bg-amber-100 text-amber-800';
+    if (score >= 75) return 'bg-emerald-100 text-emerald-800';
+    if (score >= 55) return 'bg-amber-100 text-amber-800';
     return 'bg-red-100 text-red-800';
   };
 
@@ -325,7 +325,7 @@ export default function DashboardPage() {
               <div className="text-xs text-green-600 mt-1">↗ +{Math.max(0, (latestScan?.newLeadsFound || 0) - 3)} vs yesterday</div>
             </div>
             <div className="bg-gray-100 rounded-lg p-4">
-              <div className="text-xs text-gray-600 mb-2">High Intent (80+)</div>
+              <div className="text-xs text-gray-600 mb-2">High Intent (75+)</div>
               <div className="text-2xl font-medium text-gray-900 font-mono">{highIntentLeads}</div>
               <div className="text-xs text-green-600 mt-1">↗ +{Math.floor(highIntentLeads * 0.15)} this week</div>
             </div>
@@ -407,6 +407,7 @@ export default function DashboardPage() {
                   {leadsData.hiddenOtherRegions ? ` · ${leadsData.hiddenOtherRegions} outside USA/UAE/Europe/India hidden` : ''}
                   {leadsData.hiddenClosed ? ` · ${leadsData.hiddenClosed} closed job postings hidden` : ''}
                   {leadsData.hiddenOutsideIcp ? ` · ${leadsData.hiddenOutsideIcp} outside ICP hidden` : ''}
+                  {leadsData.hiddenNotRelevant ? ` · ${leadsData.hiddenNotRelevant} marked not relevant hidden` : ''}
                 </span>
               ) : null}
             </span>

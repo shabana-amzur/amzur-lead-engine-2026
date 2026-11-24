@@ -7,7 +7,11 @@ import { lobBadge, lobLabel } from '@/lib/lobs';
 import { industryBadge, isPriorityIndustry } from '@/lib/industries';
 import { describeSource, isLinkedInLead } from '@/lib/sources';
 import { regionLabel } from '@/lib/regions';
-import { buildBrief } from '@/lib/leadBrief';
+import { buildBrief, buildTimeline } from '@/lib/leadBrief';
+import { matchCaseStudies } from '@/lib/caseStudies';
+import LeadActionBar from '@/components/LeadActionBar';
+import RfpPanel from '@/components/RfpPanel';
+import { ActivityLog, CaseStudyMatch, OutreachSequence, WhyNowTimeline } from '@/components/LeadPanels';
 import ApolloContacts, { ApolloCompanyButton } from '@/components/ApolloContacts';
 import CompanyIntelligence from '@/components/CompanyIntelligence';
 import { useRouter } from 'next/navigation';
@@ -158,16 +162,12 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   const possibleVendor = VENDOR_PATTERNS.test(context);
   // Lead-specific fit analysis and approach, built from the source itself.
   const brief = buildBrief(lead, { possibleVendor });
+  const timeline = buildTimeline(lead);
+  const caseStudies = matchCaseStudies(lead, brief.context.themes);
+  const isRfp = brief.context.kind === 'rfp';
 
   const emailDomain = (lead.outreachEmail || '').split('@')[1] || '';
   const reliableEmail = lead.outreachEmail && !NON_PROSPECT_EMAIL_DOMAINS.test(emailDomain);
-
-  const scoreClass =
-    lead.leadScore >= 80
-      ? 'bg-emerald-100 text-emerald-800'
-      : lead.leadScore >= 65
-        ? 'bg-amber-100 text-amber-800'
-        : 'bg-gray-100 text-gray-700';
 
   const actionLink = 'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50';
 
@@ -205,12 +205,6 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                   {postedAt ? `Posted ${formatDate(postedAt)} (${timeAgo(postedAt)})` : `Discovered ${formatDate(lead.discoveredAt)}`}
                 </span>
               </div>
-            </div>
-            <div className="text-right">
-              <div className={`inline-flex items-center px-4 py-2 rounded-full text-lg font-semibold ${scoreClass}`}>
-                {lead.leadScore}/100
-              </div>
-              <div className="text-xs text-gray-400 mt-1">Lead score</div>
             </div>
           </div>
 
@@ -262,6 +256,8 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
             </a>
           </div>
         </div>
+
+        <LeadActionBar lead={lead} onChange={() => mutate()} />
 
         {possibleVendor && (
           <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -403,6 +399,75 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               </div>
             </section>
 
+            {isRfp && <RfpPanel lead={lead} onChange={() => mutate()} />}
+
+            <section className="bg-white border border-gray-200 rounded-lg p-6">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">How Amzur fits</h2>
+              <p className="text-xs text-gray-400 mb-4">Each need below is taken from the source and mapped to what Amzur delivers.</p>
+              <div className="divide-y divide-gray-100 border border-gray-100 rounded-md">
+                {brief.rows.map((row) => (
+                  <div key={row.need} className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4">
+                    <div>
+                      <div className="text-xs text-gray-400 uppercase tracking-wide mb-1">Their need</div>
+                      <div className="font-medium text-gray-900">{row.need}</div>
+                      {row.evidence && (
+                        <blockquote className="mt-1.5 text-sm text-gray-600 border-l-2 border-gray-200 pl-2 italic">
+                          “{row.evidence}”
+                        </blockquote>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-400 uppercase tracking-wide mb-1">Amzur delivers</div>
+                      <div className="text-sm text-gray-800">{row.amzur}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {brief.angles.length > 0 && (
+                <div className="mt-5">
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">How to position Amzur</h3>
+                  <ul className="space-y-2 text-sm text-gray-700">
+                    {brief.angles.map((angle) => (
+                      <li key={angle} className="flex gap-2">
+                        <span className="text-emerald-600 mt-0.5">✓</span>
+                        <span>{angle}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {brief.incumbent && (
+                <div className="mt-5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <span className="font-medium">Current vendor signal:</span> {brief.incumbent}
+                </div>
+              )}
+
+              <CaseStudyMatch matches={caseStudies} />
+            </section>
+
+            <WhyNowTimeline events={timeline} />
+
+            <section className="bg-white border border-gray-200 rounded-lg p-6">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Engagement plan</h2>
+              <ol className="relative border-l border-gray-200 ml-3 space-y-5">
+                {brief.steps.map((step, index) => (
+                  <li key={step.title} className="ml-6">
+                    <span className="absolute -left-3 flex items-center justify-center w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-semibold">
+                      {index + 1}
+                    </span>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <h3 className="font-medium text-gray-900">{step.title}</h3>
+                      <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{step.when}</span>
+                    </div>
+                    <p className="text-sm text-gray-700 mt-1">{step.detail}</p>
+                  </li>
+                ))}
+              </ol>
+            </section>
+
+            <OutreachSequence brief={brief} />
+
             {!fromLinkedIn && <CompanyIntelligence lead={lead} onChange={() => mutate()} />}
 
             <section className="bg-white border border-gray-200 rounded-lg p-6">
@@ -457,75 +522,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               </dl>
             </section>
 
-            <section className="bg-white border border-gray-200 rounded-lg p-6">
-              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">How Amzur fits</h2>
-              <p className="text-xs text-gray-400 mb-4">Each need below is taken from the source and mapped to what Amzur delivers.</p>
-              <div className="divide-y divide-gray-100 border border-gray-100 rounded-md">
-                {brief.rows.map((row) => (
-                  <div key={row.need} className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4">
-                    <div>
-                      <div className="text-xs text-gray-400 uppercase tracking-wide mb-1">Their need</div>
-                      <div className="font-medium text-gray-900">{row.need}</div>
-                      {row.evidence && (
-                        <blockquote className="mt-1.5 text-sm text-gray-600 border-l-2 border-gray-200 pl-2 italic">
-                          “{row.evidence}”
-                        </blockquote>
-                      )}
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-400 uppercase tracking-wide mb-1">Amzur delivers</div>
-                      <div className="text-sm text-gray-800">{row.amzur}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
 
-              {brief.angles.length > 0 && (
-                <div className="mt-5">
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">How to position Amzur</h3>
-                  <ul className="space-y-2 text-sm text-gray-700">
-                    {brief.angles.map((angle) => (
-                      <li key={angle} className="flex gap-2">
-                        <span className="text-emerald-600 mt-0.5">✓</span>
-                        <span>{angle}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </section>
-
-            <section className="bg-white border border-gray-200 rounded-lg p-6">
-              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Engagement plan</h2>
-              <ol className="relative border-l border-gray-200 ml-3 space-y-5">
-                {brief.steps.map((step, index) => (
-                  <li key={step.title} className="ml-6">
-                    <span className="absolute -left-3 flex items-center justify-center w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-semibold">
-                      {index + 1}
-                    </span>
-                    <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <h3 className="font-medium text-gray-900">{step.title}</h3>
-                      <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{step.when}</span>
-                    </div>
-                    <p className="text-sm text-gray-700 mt-1">{step.detail}</p>
-                  </li>
-                ))}
-              </ol>
-            </section>
-
-            <section className="bg-white border border-gray-200 rounded-lg p-6">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Draft outreach</h2>
-                <CopyButton text={`Subject: ${brief.message.subject}\n\n${brief.message.body}`} label="Copy message" />
-              </div>
-              <div className="text-sm text-gray-500 mb-2">
-                Subject: <span className="text-gray-900 font-medium">{brief.message.subject}</span>
-              </div>
-              <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800 bg-gray-50 border border-gray-200 rounded-md p-4">
-                {brief.message.body}
-              </pre>
-              <p className="text-xs text-gray-400 mt-2">A starting point. Personalise it before sending.</p>
-            </section>
           </div>
 
           {/* Side column */}
@@ -577,7 +574,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Who to contact</h2>
                 {!fromLinkedIn && (
                   <div className="mb-4 pb-4 border-b border-gray-100">
-                    <ApolloContacts lead={lead} onChange={() => mutate()} />
+                    <ApolloContacts lead={lead} brief={brief} onChange={() => mutate()} />
                   </div>
                 )}
                 {fromLinkedIn && (
@@ -664,6 +661,8 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 </p>
               </section>
             )}
+
+            <ActivityLog lead={lead} onChange={() => mutate()} />
 
             <section className="bg-white border border-gray-200 rounded-lg p-5">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Discovery details</h2>

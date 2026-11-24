@@ -250,6 +250,20 @@ export type Brief = {
   risks: string[];
   contacts: { role: string; why: string }[];
   message: { subject: string; body: string };
+  sequence: SequenceStep[];
+  incumbent: string | null;
+  context: BriefContext;
+};
+
+export type SequenceStep = { day: number; channel: 'Email' | 'LinkedIn' | 'Call'; title: string; subject?: string; body: string };
+export type BriefContext = {
+  kind: 'rfp' | 'job' | 'linkedin' | 'announcement';
+  company: string;
+  need: string;
+  themes: string[];
+  service: string;
+  role: string | null;
+  hook: string;
 };
 
 type SignalKind = 'rfp' | 'job' | 'linkedin' | 'announcement';
@@ -575,6 +589,13 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
     body: `${greeting}\n\n${hook} ${offer}\n\n${close}\n[Your name]\nAmzur Technologies`,
   };
 
+  // ---- current vendor / partner mentioned in the source ----
+  const incumbent = incumbentSignal(allText, kind);
+
+  // ---- multi-step sequence ----
+  const context: BriefContext = { kind, company, need, themes: themeLabels, service, role, hook };
+  const sequence = buildSequence(context, message, incumbent);
+
   return {
     fit: { level, reasons },
     summary,
@@ -586,5 +607,169 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
     risks,
     contacts,
     message,
+    sequence,
+    incumbent,
+    context,
   };
+}
+
+// ------------------------------------------------------- current vendor ----
+
+// What the source says about providers they already use. Phrases, not
+// names: snippets rarely name the incumbent reliably.
+function incumbentSignal(text: string, kind: string): string | null {
+  const t = text || '';
+  if (/\b(manage|managing|oversee|overseeing|coordinate|work with|working with)\b[^.]{0,60}\b(implementation partners?|msps?|managed service providers?|vendors?|outsourc\w+|third[- ]party (partners?|providers?))\b/i.test(t)) {
+    return 'The role manages existing implementation partners / managed service providers. Position Amzur as extra capacity or a better-value partner, not a first vendor.';
+  }
+  if (/\b(incumbent|current (vendor|provider|partner|contract)|existing (vendor|provider|contract|partner)|contract (expires|ends|renewal))\b/i.test(t)) {
+    return 'The source mentions a current vendor or contract. Find out when it ends and what isn’t working: lead with a transition plan.';
+  }
+  if (/\b(replace|replacing|migrat\w+ (from|off)|sunset|end[- ]of[- ]life|moving away from)\b/i.test(t)) {
+    return 'They are moving off an existing system or provider. Lead with migration experience and a low-risk cutover plan.';
+  }
+  if (kind === 'rfp') return 'Public tenders often have an incumbent. Ask in clarifications whether one exists and why the work is being re-tendered.';
+  return null;
+}
+
+// ------------------------------------------------------------- sequence ----
+
+function buildSequence(ctx: BriefContext, first: { subject: string; body: string }, incumbent: string | null): SequenceStep[] {
+  const topics = ctx.themes.slice(0, 2).join(' and ') || ctx.service;
+  if (ctx.kind === 'rfp') {
+    return [
+      { day: 1, channel: 'Email', title: 'Clarification contact', subject: first.subject, body: first.body },
+      {
+        day: 3,
+        channel: 'Email',
+        title: 'Clarification questions',
+        subject: `Questions on ${ctx.company}'s solicitation`,
+        body: `Hi [Name],\n\nAhead of our response to ${quote(ctx.need, 90)}, a few questions:\n\n1. Is there an incumbent provider, and why is the work being tendered now?\n2. What budget range and contract type are expected?\n3. Which systems must the solution integrate with?\n\nThank you,\n[Your name]\nAmzur Technologies`,
+      },
+      {
+        day: 10,
+        channel: 'Email',
+        title: 'Submission confirmation',
+        subject: `${ctx.company}: Amzur Technologies response submitted`,
+        body: `Hi [Name],\n\nWe've submitted our response for ${quote(ctx.need, 90)}. Happy to present the approach or answer evaluation questions at any point.\n\nThank you,\n[Your name]\nAmzur Technologies`,
+      },
+    ];
+  }
+  const hookShort = ctx.hook.replace(/\s+/g, ' ');
+  return [
+    { day: 1, channel: 'Email', title: 'Intro email', subject: first.subject, body: first.body },
+    {
+      day: 2,
+      channel: 'LinkedIn',
+      title: 'Connection note (under 300 characters)',
+      body: clip(`Hi [Name]. ${hookShort} Amzur helps teams with ${topics}. Would be glad to connect.`, 290),
+    },
+    {
+      day: 5,
+      channel: 'Email',
+      title: 'Follow-up with value',
+      subject: `Re: ${first.subject}`,
+      body: `Hi [Name],\n\nFollowing up with something useful: teams in this position usually get stuck on ${topics}. ${
+        incumbent ? 'Where a partner is already in place, we often start with a focused piece of work alongside them. ' : ''
+      }We typically start with a short, fixed-scope first phase so you can judge the fit before committing.\n\nWorth a 20-minute call?\n\n[Your name]\nAmzur Technologies`,
+    },
+    {
+      day: 8,
+      channel: 'Call',
+      title: 'Call script',
+      body: `Opener: "${ctx.hook}"\nWhy call: Amzur delivers ${ctx.service}${ctx.themes.length ? ` (${ctx.themes.slice(0, 3).join(', ')})` : ''}.\nAsk: "What's the biggest blocker on this right now, and how are you staffing it?"\nIf interested: offer a 20-minute scoping call with an Amzur solution lead.\nIf not now: ask when to check back and who else owns it.`,
+    },
+    {
+      day: 14,
+      channel: 'Email',
+      title: 'Close the loop',
+      subject: `Closing the loop: ${ctx.company}`,
+      body: `Hi [Name],\n\nI haven't heard back, so I'll assume the timing isn't right. If ${topics} becomes a priority, I'm one reply away.\n\nBest regards,\n[Your name]\nAmzur Technologies`,
+    },
+  ];
+}
+
+const quote = (text: string, max: number) => `“${clip(text, max).replace(/[.]+$/, '')}”`;
+
+// ------------------------------------------------- per-person messaging ----
+
+// "a" or "an" by sound, including acronyms ("an SVP", "a VP", "an MD").
+function articleFor(text: string): string {
+  const word = (text || '').trim().split(/[\s,]+/)[0] || '';
+  if (/^[A-Z]{2,5}$/.test(word)) return /^[AEFHILMNORSX]/.test(word) ? 'an' : 'a';
+  return /^[aeiou]/i.test(word) ? 'an' : 'a';
+}
+
+export type Persona = 'technology' | 'it' | 'operations' | 'transformation' | 'executive';
+
+export function personaOf(title: string | null | undefined): Persona {
+  const t = (title || '').toLowerCase();
+  if (/\b(digital|transformation|innovation)\b/.test(t)) return 'transformation';
+  if (/\b(cio|information|it\b|systems|infrastructure)\b/.test(t)) return 'it';
+  if (/\b(coo|operat\w+|supply chain|logistics)\b/.test(t)) return 'operations';
+  if (/\b(cto|technology|technical|engineering|product|platform|software|data|ai)\b/.test(t)) return 'technology';
+  return 'executive';
+}
+
+const PERSONA_ANGLE: Record<Persona, string> = {
+  technology: 'add senior engineering capacity quickly, without slowing your roadmap or lowering the bar',
+  it: 'keep core systems reliable and integrated while the change happens, with clear SLAs and security',
+  operations: 'cut manual effort and cost in the processes your teams run every day',
+  transformation: 'deliver the programme on time with a partner that owns outcomes, not just hours',
+  executive: 'get this done faster and at lower risk than building the team from scratch',
+};
+
+/** Email and LinkedIn note for one named contact, angled to their role. */
+export function personaOutreach(brief: Brief, contact: { name?: string | null; title?: string | null }) {
+  const ctx = brief.context;
+  const firstName = (contact.name || '').split(' ')[0] || '[Name]';
+  const persona = personaOf(contact.title);
+  const angle = PERSONA_ANGLE[persona];
+  const topics = ctx.themes.slice(0, 2).join(' and ') || ctx.service;
+  const email = {
+    subject: brief.message.subject,
+    body: `Hi ${firstName},\n\n${ctx.hook} As ${contact.title ? `${articleFor(contact.title)} ${contact.title}` : 'a leader there'}, you're probably weighing how to ${angle}.\n\nAmzur Technologies helps teams with ${topics}${ctx.kind === 'job' ? ', and can add experienced people within a couple of weeks' : ''}. Would a 20-minute call next week be useful?\n\nBest regards,\n[Your name]\nAmzur Technologies`,
+  };
+  const linkedin = clip(`Hi ${firstName}. ${ctx.hook} Amzur helps ${persona === 'operations' ? 'operations' : 'technology'} leaders ${angle.split(',')[0]}. Glad to connect.`, 290);
+  return { persona, email, linkedin };
+}
+
+// ------------------------------------------------------- RFP deadline ----
+
+const MONTHS = 'jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec';
+/** A submission deadline stated in the source text, as YYYY-MM-DD, or null. */
+export function findDeadline(text: string, postedAt?: string | null): string | null {
+  const m = (text || '').match(
+    new RegExp(`\\b(?:due|deadline|closing date|closes|submission[^.]{0,20}by|submit[^.]{0,20}by|bids?[^.]{0,20}by|proposals?[^.]{0,20}by)\\b[^.]{0,20}?\\b(${MONTHS})[a-z]*\\.?\\s+(\\d{1,2})(?:,?\\s+(\\d{4}))?`, 'i')
+  );
+  if (!m) return null;
+  const base = postedAt ? new Date(postedAt) : new Date();
+  const month = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(m[1].toLowerCase().slice(0, 3));
+  let year = m[3] ? parseInt(m[3], 10) : base.getFullYear();
+  const date = new Date(Date.UTC(year, month, parseInt(m[2], 10)));
+  if (!m[3] && date.getTime() < base.getTime() - 7 * 86400000) date.setUTCFullYear(++year);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+// ------------------------------------------------------- why-now events ----
+
+export type TimelineEvent = { date: string; label: string; detail?: string; url?: string; kind: 'source' | 'news' | 'funding' | 'found' | 'contact' | 'workflow' };
+
+/** Dated signals about this company, newest first. */
+export function buildTimeline(lead: any): TimelineEvent[] {
+  const s = lead.signals || {};
+  const events: TimelineEvent[] = [];
+  if (s.postedAt) {
+    events.push({ date: s.postedAt, kind: 'source', label: lead.intentSignal || 'Requirement posted', detail: s.requirement?.headline || s.sourceTitle, url: s.tavilyUrl });
+  }
+  for (const item of s.companyNews?.items || []) {
+    if (item.date) events.push({ date: item.date, kind: 'news', label: 'In the news', detail: item.title, url: item.url });
+  }
+  const funding = s.apollo?.company?.funding;
+  if (funding?.latestDate) events.push({ date: funding.latestDate, kind: 'funding', label: `Raised ${funding.latestStage || 'funding'}` });
+  if (lead.discoveredAt) events.push({ date: lead.discoveredAt, kind: 'found', label: 'Found by the Lead Engine' });
+  for (const c of s.apollo?.contacts || []) {
+    if (c.revealedAt) events.push({ date: c.revealedAt, kind: 'contact', label: `Contact revealed: ${c.name}`, detail: c.title || undefined });
+  }
+  return events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }

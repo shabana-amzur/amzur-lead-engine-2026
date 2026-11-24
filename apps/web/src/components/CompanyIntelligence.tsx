@@ -38,11 +38,28 @@ const growthClass = (value: number | null | undefined) =>
 const formatDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+// Where a fact came from, so reps know what is safe to quote.
+type Source = 'apollo' | 'confirmed' | 'profile' | 'estimate';
+const SOURCE_TAG: Record<Source, [string, string, string]> = {
+  apollo: ['Apollo', 'bg-emerald-50 text-emerald-700 border-emerald-200', 'From Apollo’s company record'],
+  confirmed: ['Verified', 'bg-emerald-50 text-emerald-700 border-emerald-200', 'Confirmed: Apollo lists people at this company on this domain'],
+  profile: ['Public profile', 'bg-blue-50 text-blue-700 border-blue-200', 'From the company’s public profile / LinkedIn page'],
+  estimate: ['Estimate', 'bg-amber-50 text-amber-800 border-amber-200', 'Read from a web snippet: confirm before quoting'],
+};
+
+function Fact({ label, source, children }: { label: string; source?: Source; children: React.ReactNode }) {
+  const tag = source ? SOURCE_TAG[source] : null;
   return (
     <div className="flex gap-3 text-sm">
       <dt className="text-gray-500 w-28 shrink-0">{label}</dt>
-      <dd className="text-gray-900 min-w-0 break-words">{children}</dd>
+      <dd className="text-gray-900 min-w-0 break-words">
+        {children}
+        {tag && (
+          <span title={tag[2]} className={`ml-1.5 align-middle text-[10px] px-1 py-px rounded border ${tag[1]}`}>
+            {tag[0]}
+          </span>
+        )}
+      </dd>
     </div>
   );
 }
@@ -61,7 +78,9 @@ export default function CompanyIntelligence({ lead, onChange }: { lead: any; onC
   const website = intel?.website || profile.website || null;
   const linkedin = intel?.linkedinUrl || profile.linkedinUrl || null;
   const description = intel?.description || profile.description || null;
-  const revenue = intel?.revenuePrinted ? `$${intel.revenuePrinted}` : lead.revenue ? `~$${Math.round(lead.revenue / 1e6)}M (public estimate)` : null;
+  const revenue = intel?.revenuePrinted ? `$${intel.revenuePrinted}` : lead.revenue ? `~$${Math.round(lead.revenue / 1e6)}M` : null;
+  const websiteSource: Source = intel?.website ? 'apollo' : profile.websiteSource ? 'confirmed' : 'profile';
+  const employeeSource: Source = intel?.employees ? 'apollo' : profile.employees ? 'profile' : 'estimate';
   const employees = intel?.employees || lead.employees || profile.employees || null;
   const relevant = new Set((intel?.relevantTech || []).map((t) => t.toLowerCase()));
   const techByCategory = (intel?.techStack || []).reduce<Record<string, string[]>>((groups, tech) => {
@@ -105,7 +124,7 @@ export default function CompanyIntelligence({ lead, onChange }: { lead: any; onC
       {description ? <p className="text-gray-800 leading-relaxed">{description}</p> : <p className="text-sm text-gray-500">No company description found yet.</p>}
 
       <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 mt-4">
-        <Fact label="Website">
+        <Fact label="Website" source={website ? websiteSource : undefined}>
           {website ? (
             <a href={website} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
               {hostname(website)} ↗
@@ -114,7 +133,7 @@ export default function CompanyIntelligence({ lead, onChange }: { lead: any; onC
             <span className="text-gray-400">Not found</span>
           )}
         </Fact>
-        <Fact label="LinkedIn">
+        <Fact label="LinkedIn" source={linkedin ? (intel?.linkedinUrl ? 'apollo' : 'profile') : undefined}>
           {linkedin ? (
             <a href={linkedin} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
               Company page ↗
@@ -126,10 +145,10 @@ export default function CompanyIntelligence({ lead, onChange }: { lead: any; onC
         {(intel?.industry || profile.linkedinIndustry) && (
           <Fact label="Industry">{intel?.industry || String(profile.linkedinIndustry).replace(/\s*Industry codes:.*$/i, '')}</Fact>
         )}
-        {(intel?.address || profile.headquarters) && <Fact label="Headquarters">{intel?.address || profile.headquarters}</Fact>}
-        {(intel?.founded || profile.founded) && <Fact label="Founded">{intel?.founded || profile.founded}</Fact>}
-        {revenue && <Fact label="Revenue">{revenue}</Fact>}
-        {employees ? <Fact label="Employees">~{Number(employees).toLocaleString()}</Fact> : null}
+        {(intel?.address || profile.headquarters) && <Fact label="Headquarters" source={intel?.address ? 'apollo' : 'profile'}>{intel?.address || profile.headquarters}</Fact>}
+        {(intel?.founded || profile.founded) && <Fact label="Founded" source={intel?.founded ? 'apollo' : 'profile'}>{intel?.founded || profile.founded}</Fact>}
+        {revenue && <Fact label="Revenue" source={intel?.revenuePrinted ? 'apollo' : 'estimate'}>{revenue}</Fact>}
+        {employees ? <Fact label="Employees" source={employeeSource}>~{Number(employees).toLocaleString()}</Fact> : null}
         {intel?.phone && <Fact label="Main phone"><a href={`tel:${intel.phone}`} className="hover:text-blue-700">{intel.phone}</a></Fact>}
         {intel?.publicSymbol && <Fact label="Listed">{intel.publicSymbol}</Fact>}
         {intel?.funding?.totalPrinted && (

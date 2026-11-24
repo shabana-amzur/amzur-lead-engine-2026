@@ -277,4 +277,59 @@ async function enrichCompany(website) {
   };
 }
 
-module.exports = { isConfigured, findDecisionMakers, revealContact, enrichCompany, phonesFrom, ApolloError, icpRank };
+// ---- sequences (outreach in Apollo) ----
+
+/** The team's Apollo sequences and sending mailboxes, for the picker. Free. */
+async function listSequencesAndMailboxes() {
+  const [sequences, mailboxes] = await Promise.all([
+    apollo('emailer_campaigns/search', { per_page: 100 }),
+    apollo('email_accounts', {}, 'get'),
+  ]);
+  return {
+    sequences: (sequences.emailer_campaigns || [])
+      .filter((c) => !c.archived)
+      .map((c) => ({ id: c.id, name: c.name, active: !!c.active, steps: c.num_steps ?? null })),
+    mailboxes: (mailboxes.email_accounts || [])
+      .filter((m) => m.active !== false)
+      .map((m) => ({ id: m.id, email: m.email, isDefault: !!m.default })),
+  };
+}
+
+/**
+ * Save a revealed person as an Apollo contact (deduplicated by Apollo) and add
+ * them to a sequence. Apollo then sends that sequence's emails from the mailbox.
+ */
+async function addContactToSequence({ contact, companyName, sequenceId, mailboxId }) {
+  const [firstName, ...rest] = (contact.name || '').split(' ');
+  const created = await apollo('contacts', {
+    first_name: firstName,
+    last_name: rest.join(' '),
+    email: contact.email,
+    title: contact.title || undefined,
+    organization_name: contact.organization || companyName,
+    linkedin_url: contact.linkedinUrl || undefined,
+    run_dedupe: true,
+  });
+  const contactId = created.contact?.id;
+  if (!contactId) throw new ApolloError('Apollo did not create the contact.', 502);
+  await apollo(`emailer_campaigns/${sequenceId}/add_contact_ids`, {
+    emailer_campaign_id: sequenceId,
+    contact_ids: [contactId],
+    send_email_from_email_account_id: mailboxId,
+    sequence_no_email: false,
+    sequence_active_in_other_campaigns: false,
+  });
+  return contactId;
+}
+
+module.exports = {
+  isConfigured,
+  findDecisionMakers,
+  revealContact,
+  enrichCompany,
+  phonesFrom,
+  listSequencesAndMailboxes,
+  addContactToSequence,
+  ApolloError,
+  icpRank,
+};

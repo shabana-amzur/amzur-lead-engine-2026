@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { apolloAPI } from '@/lib/api';
+import { personaOutreach, type Brief } from '@/lib/leadBrief';
 
 type Candidate = { id: string; name: string; title: string | null; hasEmail: boolean; hasPhone: boolean; icpRank: number };
 type Contact = {
@@ -22,7 +23,111 @@ type Contact = {
   revealedAt?: string;
   location: string | null;
   icpRank: number;
+  sequence?: { id: string; name: string | null; addedAt: string };
 };
+
+function CopyLink({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        navigator.clipboard?.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        })
+      }
+      className="text-xs px-2 py-1 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+    >
+      {copied ? '✓ Copied' : label}
+    </button>
+  );
+}
+
+// Pick an Apollo sequence and mailbox, then add the contact. Apollo sends the
+// sequence's emails, so this asks before doing it.
+function SequencePicker({ lead, contact, onDone }: { lead: any; contact: Contact; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const { data, error } = useSWR(open ? '/api/leads/apollo/sequences' : null, () => apolloAPI.sequences(), { revalidateOnFocus: false });
+  const [sequenceId, setSequenceId] = useState('');
+  const [mailboxId, setMailboxId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState('');
+  if (contact.sequence) {
+    return <span className="text-xs text-emerald-700">✉️ In sequence “{contact.sequence.name || 'Apollo sequence'}”</span>;
+  }
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="text-xs px-2 py-1 rounded-md border border-blue-300 text-blue-700 hover:bg-blue-50">
+        + Add to Apollo sequence
+      </button>
+    );
+  }
+  const sequences = data?.sequences || [];
+  const mailboxes = data?.mailboxes || [];
+  const chosen = sequences.find((q: any) => q.id === sequenceId);
+  return (
+    <div className="w-full mt-1 rounded-md border border-gray-200 bg-white p-2 space-y-2">
+      {!data && !error && <div className="text-xs text-gray-500">Loading sequences…</div>}
+      {error && <div className="text-xs text-red-600">{error.message || 'Could not load sequences'}</div>}
+      {data && !sequences.length && <div className="text-xs text-gray-500">No sequences in Apollo yet. Create one in Apollo first.</div>}
+      {data && sequences.length > 0 && !mailboxes.length && (
+        <div className="text-xs text-amber-800">
+          No sending mailbox is connected in Apollo, so it can&apos;t send sequence emails. Connect one in Apollo (Settings → Mailboxes), then
+          try again.
+        </div>
+      )}
+      {data && sequences.length > 0 && mailboxes.length > 0 && (
+        <>
+          <select value={sequenceId} onChange={(e) => setSequenceId(e.target.value)} className="w-full text-xs border border-gray-300 rounded px-2 py-1">
+            <option value="">Choose a sequence…</option>
+            {sequences.map((q: any) => (
+              <option key={q.id} value={q.id}>
+                {q.name}
+                {q.active ? '' : ' (paused)'}
+              </option>
+            ))}
+          </select>
+          <select value={mailboxId} onChange={(e) => setMailboxId(e.target.value)} className="w-full text-xs border border-gray-300 rounded px-2 py-1">
+            <option value="">Send from…</option>
+            {mailboxes.map((m: any) => (
+              <option key={m.id} value={m.id}>
+                {m.email}
+              </option>
+            ))}
+          </select>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={!sequenceId || !mailboxId || busy}
+              onClick={async () => {
+                const mailbox = mailboxes.find((m: any) => m.id === mailboxId);
+                if (!window.confirm(`Add ${contact.name} to “${chosen?.name}”? Apollo will start sending that sequence's emails to ${contact.email} from ${mailbox?.email}.`)) return;
+                setBusy(true);
+                setFailure('');
+                try {
+                  await apolloAPI.addToSequence(lead.id, contact.id, sequenceId, chosen?.name, mailboxId);
+                  onDone();
+                } catch (err: any) {
+                  setFailure(err?.message || 'Could not add to the sequence');
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              className="text-xs px-2 py-1 rounded bg-blue-600 text-white disabled:opacity-40"
+            >
+              {busy ? 'Adding…' : 'Add to sequence'}
+            </button>
+            <button type="button" onClick={() => setOpen(false)} className="text-xs text-gray-600">
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+      {failure && <div className="text-xs text-red-600">{failure}</div>}
+    </div>
+  );
+}
 
 const ICP_BADGE: Record<number, [string, string]> = {
   4: ['ICP role', 'bg-emerald-100 text-emerald-800'],
@@ -42,7 +147,7 @@ function linkedInSearch(candidate: Candidate, company: string) {
 
 const PHONE_TYPES: Record<string, string> = { mobile: 'mobile', direct_dial: 'direct', work_direct: 'direct', work: 'work', work_hq: 'office' };
 
-export default function ApolloContacts({ lead, onChange }: { lead: any; onChange: () => void }) {
+export default function ApolloContacts({ lead, onChange, brief }: { lead: any; onChange: () => void; brief?: Brief }) {
   const { data: status } = useSWR('/api/leads/apollo/status', () => apolloAPI.status());
   const saved = lead.signals?.apollo || {};
   const candidates: Candidate[] = saved.candidates || [];
@@ -193,6 +298,17 @@ export default function ApolloContacts({ lead, onChange }: { lead: any; onChange
                       {contact.location && <div className="text-gray-500">📍 {contact.location}</div>}
                     </div>
                   )}
+
+                  {contact && brief && (() => {
+                    const outreach = personaOutreach(brief, contact);
+                    return (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <CopyLink text={`Subject: ${outreach.email.subject}\n\n${outreach.email.body}`} label="Copy email for this role" />
+                        <CopyLink text={outreach.linkedin} label="Copy LinkedIn note" />
+                        {contact.email && <SequencePicker lead={lead} contact={contact} onDone={onChange} />}
+                      </div>
+                    );
+                  })()}
 
                   {(!contact || !phoneDone) && (
                     <div className="mt-2 flex flex-wrap gap-2">

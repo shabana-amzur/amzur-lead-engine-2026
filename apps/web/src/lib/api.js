@@ -105,6 +105,12 @@ export const leadsAPI = {
       method: 'DELETE',
     });
   },
+
+  // Status, owner, next action, RFP checklist or a note; logged in the lead's activity.
+  updateWorkflow: async (id, changes) =>
+    fetchAPI(`/api/leads/${id}/workflow`, { method: 'PATCH', body: JSON.stringify(changes) }),
+
+  teamMembers: async () => fetchAPI('/api/leads/team/members'),
 };
 
 // Apollo contacts for a lead. Search is free; reveal and company lookup use
@@ -118,6 +124,14 @@ export const apolloAPI = {
   enrichCompany: async (leadId) => fetchAPI(`/api/leads/${leadId}/company/enrich`, { method: 'POST' }),
   // Free: recent news about the company (cached for a day).
   companyNews: async (leadId) => fetchAPI(`/api/leads/${leadId}/company/news`),
+  // The team's Apollo sequences and sending mailboxes (free).
+  sequences: async () => fetchAPI('/api/leads/apollo/sequences'),
+  // Adds a revealed contact to a sequence: Apollo then sends its emails.
+  addToSequence: async (leadId, personId, sequenceId, sequenceName, mailboxId) =>
+    fetchAPI(`/api/leads/${leadId}/contacts/sequence`, {
+      method: 'POST',
+      body: JSON.stringify({ personId, sequenceId, sequenceName, mailboxId }),
+    }),
 };
 
 // Discovery Scan API
