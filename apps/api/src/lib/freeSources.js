@@ -30,6 +30,7 @@ const EDITIONS = {
   AE: { hl: 'en-AE', gl: 'AE', ceid: 'AE:en' },
   GB: { hl: 'en-GB', gl: 'GB', ceid: 'GB:en' },
   IE: { hl: 'en-IE', gl: 'IE', ceid: 'IE:en' },
+  KE: { hl: 'en-KE', gl: 'KE', ceid: 'KE:en' },
 };
 
 async function searchNews(query, { days = 45, max = 15, edition = 'US' } = {}) {

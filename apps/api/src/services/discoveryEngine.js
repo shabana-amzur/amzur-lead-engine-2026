@@ -12,7 +12,7 @@ import { searchWeb } from '../lib/searchProviders';
 import { searchNews } from '../lib/freeSources';
 import { fetchContractsFinder, fetchTed } from '../lib/tenderFeeds';
 import { LEAD_MAX_AGE_DAYS, LEAD_ARCHIVE_DAYS, isRecent } from '../config/recency';
-import { classifyGeography, leadGeography } from '../lib/geography';
+import { classifyGeography, leadGeography, regionAllows } from '../lib/geography';
 import { isJobOpen, jobApiUrl } from '../lib/jobStatus';
 import { classifyVendorIntent, headlineShowsVendorChosen } from '../lib/vendorIntent';
 import { largeEnterpriseReason } from '../lib/largeEnterprise';
@@ -32,15 +32,15 @@ const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPE
 // a vendor already selected, contracts awarded, partnerships, go-lives and case
 // studies are dropped by lib/vendorIntent.js; unclear ones are saved as
 // "Review required". So these searches ask for open calls, not "selects X".
-function regionalNewsSearches(region, edition, queries) {
+function regionalNewsSearches(region, edition, queries, { lob = 'auto', topic = 'technology' } = {}) {
   return queries.map((query) => ({
     kind: 'news',
     edition,
     requireRegion: region,
     allowUnknownRegion: true,
     query,
-    lob: 'auto',
-    intent: `Open technology tender / RFP in ${region === 'Europe' ? 'Europe' : region === 'UAE' ? 'the UAE' : 'India'}`,
+    lob,
+    intent: `Open ${topic} tender / RFP in ${region === 'UAE' ? 'the UAE' : region}`,
   }));
 }
 
@@ -166,6 +166,14 @@ const SEARCHES = [
     query: 'site:linkedin.com/posts ("looking for an ERP" OR "evaluating ERP" OR "selecting an ERP" OR "choosing an ERP" OR "ERP implementation partner" OR "NetSuite implementation partner")' + LINKEDIN_EXCLUDE,
     lob: 'ERP',
     intent: 'Choosing an ERP and asking on LinkedIn',
+  },
+  {
+    kind: 'linkedin',
+    depth: 'basic',
+    // Kenya: ERP / NetSuite only
+    query: 'site:linkedin.com/posts (Kenya OR Nairobi OR Mombasa) ("can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" OR "looking for an ERP" OR "implementation partner" OR "any recommendations") (NetSuite OR ERP OR "Business Central" OR SAP OR Odoo)' + LINKEDIN_EXCLUDE,
+    lob: 'ERP',
+    intent: 'Asked on LinkedIn for an ERP / NetSuite partner in Kenya',
   },
   {
     kind: 'linkedin',
@@ -358,6 +366,8 @@ const SEARCHES = [
   // is an open call for technology and doesn't clearly name another region.
   ...regionalNewsSearches('UAE', 'AE', ['UAE tender software', 'UAE tender IT services', 'UAE RFP technology', 'Dubai tender digital', 'Abu Dhabi tender digital', 'UAE tender ERP', 'UAE tender AI']),
   ...regionalNewsSearches('Europe', 'GB', ['UK tender software', 'UK council tender IT', 'NHS tender digital', 'UK procurement ERP', 'Ireland tender IT services', 'Germany tender software', 'Europe tender cloud']),
+  // Kenya: ERP / NetSuite work only (see REGION_RULES in lib/geography.js).
+  ...regionalNewsSearches('Kenya', 'KE', ['Kenya tender ERP', 'Kenya ERP system tender', 'Kenya RFP ERP implementation', 'Nairobi ERP tender', 'Kenya NetSuite', 'Kenya invites bids ERP'], { lob: 'ERP', topic: 'ERP' }),
   ...regionalNewsSearches('India', 'IN', ['India tender software', 'India RFP IT services', 'floats tender ERP', 'invites bids software', 'RFP digital transformation India', 'tender AI platform India']),
 ];
 
@@ -795,6 +805,11 @@ async function saveLinkedInLead(search, result, seenCompanies) {
     console.log(`   ⏭️  Skipped LinkedIn post (outside target regions): ${url}`);
     return false;
   }
+  const allowed = regionAllows(geo.region, { lob, text: postText });
+  if (!allowed.ok) {
+    console.log(`   ⏭️  Skipped LinkedIn post (${allowed.reason}): ${url}`);
+    return false;
+  }
   const slug = linkedInSlug(url);
   // An explicit request for a provider is a strong signal: score higher.
   const score = scoreLead(industry, 80, 90);
@@ -1201,9 +1216,15 @@ export async function discoverLeads({ mode = 'full', only = null } = {}) {
           console.log(`   ⏭️  Skipped: ${companyName} (${geo.location || geo.region}, not ${search.requireRegion})`);
           return;
         }
-        // Only target regions (USA, UAE, Europe, India); unknown locations are kept.
+        // Only target regions (USA, UAE, Europe, India, Kenya); unknown locations are kept.
         if (geo.region === 'Other') {
           console.log(`   ⏭️  Skipped: ${companyName} (outside target regions: ${geo.location || 'location in text'})`);
+          return;
+        }
+        // Some regions only want some work (Kenya: ERP / NetSuite only).
+        const allowed = regionAllows(geo.region, { lob, text: `${sourceText} ${requirement?.headline || ''} ${requirement?.summary || ''}` });
+        if (!allowed.ok) {
+          console.log(`   ⏭️  Skipped: ${companyName} (${allowed.reason})`);
           return;
         }
         await prisma.lead.create({

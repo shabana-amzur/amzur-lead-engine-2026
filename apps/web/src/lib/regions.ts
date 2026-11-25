@@ -4,6 +4,7 @@ export const REGION_OPTIONS = [
   { value: 'UAE', label: 'UAE', flag: '🇦🇪' },
   { value: 'Europe', label: 'Europe', flag: '🇪🇺' },
   { value: 'India', label: 'India', flag: '🇮🇳' },
+  { value: 'Kenya', label: 'Kenya (ERP / NetSuite)', flag: '🇰🇪' },
   { value: 'Unknown', label: 'Location unknown', flag: '' },
 ];
 

@@ -9,10 +9,11 @@
 //   Recency              up to 15  15 when posted today, 0 at 20 days
 //   Priority industry        5     priority industries in config/industries.json
 //                                  (Healthcare, Energy, Retail, F&B manufacturing)
-//   Target region            5     USA, UAE, Europe or India confirmed
+//   Target region            5     USA, UAE, Europe, India or Kenya confirmed
 //   Contact found            5     a decision maker's email revealed
 // CommonJS so scripts can require it too.
 const { LEAD_MAX_AGE_DAYS } = require('../config/recency');
+const { isTargetRegion } = require('./geography');
 const industryConfig = require('../config/industries.json');
 
 const PRIORITY_INDUSTRIES = new Set(industryConfig.industries.filter((i) => i.priority).map((i) => i.name));
@@ -80,7 +81,7 @@ function scoreLead(lead, icp) {
   breakdown.push({ label: priority ? `${lead.industry}: priority industry` : 'Not a priority industry', points: priority ? 5 : 0, max: 5 });
 
   const region = signals.geography;
-  const inRegion = ['USA', 'UAE', 'Europe', 'India'].includes(region);
+  const inRegion = isTargetRegion(region);
   breakdown.push({ label: inRegion ? `In a target region (${region})` : 'Region not confirmed', points: inRegion ? 5 : 0, max: 5 });
 
   const contact = (signals.apollo?.contacts || []).some((c) => c.email);

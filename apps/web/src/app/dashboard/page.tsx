@@ -31,6 +31,9 @@ const NO_FILTERS: Filters = { quick: 'all', icp: 'all', region: 'all', source: '
 
 // The number cards: which leads each one counts (and lists when clicked).
 const DAY_MS = 86400000;
+// All leads are loaded at once (counts, filters and the table work on the full
+// set); well above current volumes so the totals are never cut off.
+const LEADS_LIMIT = 1000;
 const startOfDay = (offsetDays = 0) => {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -176,8 +179,8 @@ export default function DashboardPage() {
   // Fetch all leads
   const olderView = activeView === 'older';
   const { data: leadsData, error: leadsError, mutate: refreshLeads } = useSWR(
-    olderView ? '/api/leads?limit=200&view=older' : '/api/leads?limit=200',
-    () => leadsAPI.getAll(olderView ? { page: 1, limit: 200, view: 'older' } : { page: 1, limit: 200 }),
+    olderView ? `/api/leads?limit=${LEADS_LIMIT}&view=older` : `/api/leads?limit=${LEADS_LIMIT}`,
+    () => leadsAPI.getAll(olderView ? { page: 1, limit: LEADS_LIMIT, view: 'older' } : { page: 1, limit: LEADS_LIMIT }),
     { keepPreviousData: true }
   );
   // The Older tab's count, from whichever list is loaded (both report it).
@@ -471,7 +474,13 @@ export default function DashboardPage() {
           {/* Metrics: each number opens the leads it counts */}
           <div className={`grid grid-cols-5 gap-3 mb-5 ${olderView ? 'hidden' : ''}`}>
             {[
-              { card: 'total', label: 'Total Opportunities', value: totalLeads, note: `+${newThisWeek} found this week`, good: newThisWeek > 0 },
+              {
+                card: 'total',
+                label: `Total Opportunities (last ${leadsData?.recentDays || 20} days)`,
+                value: totalLeads,
+                note: `+${newThisWeek} found this week`,
+                good: newThisWeek > 0,
+              },
               { card: 'new-today', label: 'New Today', value: newToday, note: `${newYesterday} found yesterday`, good: newToday > 0 },
               { card: 'high-intent', label: 'High Intent (75+)', value: highIntentLeads, note: `+${highIntentThisWeek} this week`, good: highIntentThisWeek > 0 },
               {
@@ -500,6 +509,34 @@ export default function DashboardPage() {
               </button>
             ))}
           </div>
+
+          {/* How the total splits by signal type (the cards above show only two of
+              the types; High Intent is a score, so it overlaps all of them). */}
+          {!olderView && totalLeads > 0 && (
+            <div className="-mt-3 mb-5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-gray-600">
+              <span className="font-medium text-gray-700">{totalLeads} opportunities =</span>
+              {SIGNAL_TYPES.map(({ value, label }) => ({ value, label, count: leads.filter((l: any) => signalType(l) === value).length }))
+                .filter(({ count }) => count > 0)
+                .map(({ value, label, count }, index) => (
+                  <span key={value} className="flex items-center gap-1.5">
+                    {index > 0 && <span className="text-gray-400">+</span>}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveView('all');
+                        setFilters({ ...NO_FILTERS, signal: value });
+                        scrollToTable();
+                      }}
+                      title={`Show ${label.toLowerCase()} leads in the table`}
+                      className="rounded px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-800"
+                    >
+                      {count} {label.toLowerCase()}
+                    </button>
+                  </span>
+                ))}
+              <span className="text-gray-500 ml-1">· High Intent counts leads scoring 75+ across all of these types.</span>
+            </div>
+          )}
 
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-4 bg-white border border-gray-200 rounded-lg px-4 py-3">
@@ -574,7 +611,7 @@ export default function DashboardPage() {
                     ? `Posted ${leadsData.olderWindow?.from ?? 20}–${leadsData.olderWindow?.to ?? 30} days ago`
                     : `Posted in the last ${leadsData.recentDays} days`}
                   {!olderView && olderCount ? ` · ${olderCount} in Older leads` : ''}
-                  {leadsData.hiddenOtherRegions ? ` · ${leadsData.hiddenOtherRegions} outside USA/UAE/Europe/India hidden` : ''}
+                  {leadsData.hiddenOtherRegions ? ` · ${leadsData.hiddenOtherRegions} outside USA/UAE/Europe/India/Kenya (ERP) hidden` : ''}
                   {leadsData.hiddenClosed ? ` · ${leadsData.hiddenClosed} closed job postings hidden` : ''}
                   {leadsData.hiddenOutsideIcp ? ` · ${leadsData.hiddenOutsideIcp} outside ICP hidden` : ''}
                   {leadsData.hiddenNotRelevant ? ` · ${leadsData.hiddenNotRelevant} marked not relevant hidden` : ''}

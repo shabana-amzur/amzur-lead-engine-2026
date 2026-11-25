@@ -210,6 +210,7 @@ const REGION_NOTES: Record<string, string> = {
   USA: 'US buyer: offer US-hours coverage with India-based delivery for cost efficiency.',
   UAE: 'UAE buyer: India delivery is only 1.5 hours ahead, so the team can work a nearly full shared day.',
   Europe: 'European buyer: India time gives a good working-day overlap. Address GDPR and data residency up front.',
+  Kenya: 'Kenyan buyer: India is only 2.5 hours ahead of Nairobi, so most of the working day overlaps. Lead with NetSuite / ERP experience and local-currency (KES) and KRA eTIMS tax compliance.',
   India: 'India-based buyer: teams can be on-site and meet in person, which helps for public-sector and enterprise buyers.',
 };
 

@@ -1,9 +1,16 @@
-// Work out which target region a lead is in: USA, UAE, Europe or India.
-// Returns 'USA' | 'UAE' | 'Europe' | 'India' | 'Other' (known location outside
-// these regions) | 'Unknown' (no location found).
+// Work out which target region a lead is in: USA, UAE, Europe, India or Kenya.
+// Returns 'USA' | 'UAE' | 'Europe' | 'India' | 'Kenya' | 'Other' (known
+// location outside these regions) | 'Unknown' (no location found).
 // CommonJS so scripts can require it too.
 
-const TARGET_REGIONS = ['USA', 'UAE', 'Europe', 'India'];
+const TARGET_REGIONS = ['USA', 'UAE', 'Europe', 'India', 'Kenya'];
+
+// Regions where Amzur only wants some kinds of work. Kenya: ERP / NetSuite only.
+const ERP_TEXT =
+  /\b(erp|netsuite|net suite|enterprise resource planning|business central|dynamics 365|dynamics nav|sap|s\/4 ?hana|odoo|sage (x3|intacct|200|300|evolution)|oracle (fusion|cloud erp|e-business))\b/i;
+const REGION_RULES = {
+  Kenya: { label: 'ERP / NetSuite only', allows: ({ lob, text }) => lob === 'ERP' && ERP_TEXT.test(text || '') },
+};
 
 const US_STATES = [
   'alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado', 'connecticut', 'delaware', 'florida', 'georgia',
@@ -21,6 +28,8 @@ const US_CITIES = [
   'silicon valley', 'bay area', 'palo alto', 'mountain view', 'menlo park', 'cambridge, ma', 'el segundo', 'torrance',
   'irvine', 'san mateo', 'emeryville', 'calgary',
 ].filter((city) => city !== 'calgary');
+
+const KENYA_PLACES = ['kenya', 'kenyan', 'nairobi', 'mombasa', 'kisumu', 'nakuru', 'eldoret', 'thika', 'westlands, nairobi'];
 
 const UAE_PLACES = ['united arab emirates', 'uae', 'u.a.e', 'dubai', 'abu dhabi', 'sharjah', 'ajman', 'ras al khaimah', 'fujairah'];
 
@@ -49,7 +58,7 @@ const OTHER_PLACES = [
   'melbourne', 'singapore', 'malaysia', 'indonesia', 'philippines', 'vietnam', 'thailand', 'china', 'hong kong',
   'japan', 'tokyo', 'south korea', 'korea', 'taiwan', 'pakistan', 'bangladesh', 'sri lanka', 'nepal',
   'saudi arabia', 'riyadh', 'qatar', 'doha', 'kuwait', 'bahrain', 'oman', 'israel', 'tel aviv', 'turkey', 'istanbul',
-  'egypt', 'nigeria', 'kenya', 'south africa', 'angola', 'luanda', 'morocco', 'ghana', 'russia',
+  'egypt', 'nigeria', 'south africa', 'angola', 'luanda', 'morocco', 'ghana', 'russia',
 ];
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -57,6 +66,7 @@ const wordList = (places) => new RegExp(`(^|[^a-z])(${places.map(escape).join('|
 
 const MATCHERS = [
   ['UAE', wordList(UAE_PLACES)],
+  ['Kenya', wordList(KENYA_PLACES)],
   ['India', wordList(INDIA_PLACES)],
   ['USA', wordList(['united states', 'united states of america', 'usa', 'u.s.', 'u.s.a.', 'us-based', ...US_STATES, ...US_CITIES])],
   ['USA', new RegExp(`,\\s*(${US_STATE_CODES})(\\b|$)`)], // "Austin, TX"
@@ -101,6 +111,20 @@ function classifyGeography({ locations = [], text = '' } = {}) {
 const isTargetRegion = (region) => TARGET_REGIONS.includes(region);
 
 /**
+ * Whether a lead in this region is the kind of work Amzur wants there.
+ * Kenya: only ERP / NetSuite (ERP line of business and ERP named in the text).
+ * Other regions: everything.
+ * @param {string} region
+ * @param {{ lob?: string, text?: string }} lead
+ * @returns {{ ok: boolean, reason?: string }}
+ */
+function regionAllows(region, lead = {}) {
+  const rule = REGION_RULES[region];
+  if (!rule || rule.allows(lead)) return { ok: true };
+  return { ok: false, reason: `${region}: ${rule.label}` };
+}
+
+/**
  * Region of a lead from its most reliable location data: the job location,
  * the company's headquarters, the stored HQ, then the source text.
  */
@@ -115,4 +139,4 @@ function leadGeography({ requirement, profile, hq, text }) {
   });
 }
 
-module.exports = { classifyGeography, leadGeography, isTargetRegion, TARGET_REGIONS };
+module.exports = { classifyGeography, leadGeography, isTargetRegion, regionAllows, TARGET_REGIONS };

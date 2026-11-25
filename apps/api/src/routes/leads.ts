@@ -5,6 +5,7 @@ import { AuthRequest, authenticateToken } from '../middleware/auth';
 const { LEAD_MAX_AGE_DAYS, LEAD_ARCHIVE_DAYS, isRecent, ageInDays } = require('../config/recency');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { checkIcp } = require('../lib/icp');
+const { regionAllows } = require('../lib/geography');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const apollo = require('../lib/apollo');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -40,6 +41,17 @@ const { classifyLinkedInPost } = require('../lib/linkedinFilters');
 
 const router = Router();
 
+// In a target region (or location unknown), and the kind of work wanted there
+// (Kenya: ERP / NetSuite only).
+const inTargetRegion = (lead: any) => {
+  const s = lead.signals || {};
+  if (s.geography === 'Other') return false;
+  const text = [lead.intentSignal, s.sourceTitle, s.searchContext, s.requirement?.headline, s.requirement?.summary]
+    .filter(Boolean)
+    .join(' ');
+  return regionAllows(s.geography, { lob: lead.lob, text }).ok;
+};
+
 // Get all leads with pagination and filters (protected route)
 router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
@@ -61,7 +73,8 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       const age = ageInDays(lead.signals?.postedAt);
       return age !== null && age > LEAD_MAX_AGE_DAYS && age <= LEAD_ARCHIVE_DAYS;
     };
-    // Only target regions (USA, UAE, Europe, India) or unknown location, unless includeOtherRegions=true.
+    // Only target regions (USA, UAE, Europe, India, Kenya) or unknown location, unless includeOtherRegions=true.
+    // Some regions only want some work (Kenya: ERP / NetSuite only).
     const includeOtherRegions = req.query.includeOtherRegions === 'true';
     // Leads clearly outside the ideal customer profile are hidden unless includeOutsideIcp=true.
     const includeOutsideIcp = req.query.includeOutsideIcp === 'true';
@@ -99,11 +112,18 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       : olderView
         ? matching.filter(inOlderWindow)
         : matching.filter((lead: any) => isRecent(lead.signals?.postedAt, recentDays));
-    const inRegion = includeOtherRegions ? recent : recent.filter((lead: any) => lead.signals?.geography !== 'Other');
-    // Job postings found to be closed, and LinkedIn posts since deleted, are no longer worth contacting.
+    const inRegion = includeOtherRegions ? recent : recent.filter(inTargetRegion);
+    // Not worth contacting: job postings found to be closed, and LinkedIn posts
+    // that were deleted or whose full text shows they aren't a request
+    // (awareness posts, adverts, job ads).
     const open = includeOlder
       ? inRegion
-      : inRegion.filter((lead: any) => lead.signals?.jobOpen !== false && !lead.signals?.linkedinPost?.removed);
+      : inRegion.filter(
+          (lead: any) =>
+            lead.signals?.jobOpen !== false &&
+            !lead.signals?.linkedinPost?.removed &&
+            lead.signals?.linkedinPost?.isRequest !== false
+        );
     // Validate every lead against the ICP before it is shown (always current,
     // so older leads are covered without a backfill).
     const checked = open.map(withChecks);
@@ -123,7 +143,7 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       olderWindow: { from: LEAD_MAX_AGE_DAYS, to: LEAD_ARCHIVE_DAYS },
       // For the sidebar: leads in the Older tab (same region / closed-job rules).
       olderCount: matching.filter(
-        (lead: any) => inOlderWindow(lead) && lead.signals?.geography !== 'Other' && lead.signals?.jobOpen !== false && checkIcp(lead).status !== 'outside'
+        (lead: any) => inOlderWindow(lead) && inTargetRegion(lead) && lead.signals?.jobOpen !== false && checkIcp(lead).status !== 'outside'
       ).length,
       hiddenOlder: matching.length - recent.length,
       hiddenOtherRegions: recent.length - inRegion.length,

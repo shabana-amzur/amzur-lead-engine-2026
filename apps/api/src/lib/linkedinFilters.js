@@ -17,6 +17,13 @@ const AMZUR_SERVICE =
 const NOT_A_REAL_ASK =
   /\b(how (can|could|do|would) (anyone|you|i) recommend|why (would|do) (anyone|you) recommend|better off looking for recommendations|instead of looking for recommendations|recommendations from [^.?!]{0,40}(customers|users|peers)|posts like|(noticed|seeing|seen) a (growing |new )?trend|i('ve| have) (noticed|seen) (a lot of|many|more)|a lot of (companies|founders|people) (are|keep)|here'?s (why|how|what)|lessons? (learned|from))\b/i;
 
+// Awareness / thought-leadership posts that quote a request as an example
+// ("Posts like: 'We're looking for a software development partner'") and then
+// give advice. Checked over the whole post: the giveaway is often far below
+// the quoted ask.
+const AWARENESS =
+  /\b(posts like|(noticed|seeing|seen|spotted) (a|this) (growing |new |recent )?(trend|pattern)|at first glance|here are (some |a few |\d+ )?(signals|signs|tips|ways|reasons|red flags|lessons)|don'?t confuse|not every (engagement|post|lead|inquiry|enquiry)|as someone (involved|working|who works) in (outbound |b2b )?(sales|prospecting|business development|marketing)|engagement bait)\b/i;
+
 // Hiring / recruiting language anywhere in the post text.
 const HIRING =
   /(#hiring|#nowhiring|#jobs?\b|\bwe('| a)re hiring\b|\bnow hiring\b|\bhiring (for|a|an)\b|\bjob (type|opening|description|title)\b|\bopen (role|position)\b|\bposition:|\blocation:|\bjob type:|\bstart date\b|\b(contract|full[- ]time|part[- ]time|permanent|w2|c2c|onsite|on-site|hybrid|remote) (role|position|opportunity|job)\b|\b(share|send) (your )?(updated )?(resume|cv)\b|\bresumes?\b|\bcandidates?\b|\bapply (now|here|today)\b|\bjoin our team\b|\byears of experience\b|\b(we are|we're|i am|i'm) looking for (an? )?(experienced|skilled|talented|senior|junior|strong|passionate|seasoned)\b|\bwith (strong |deep )?(expertise|experience) in\b|\btalent acquisition\b|\brecruit(er|ers|ing|ment)\b|\bscrum master\b|\bcontract(or)? (role|position)\b)/i;
@@ -86,7 +93,9 @@ function classifyLinkedInPost(url, text) {
   if (!ask) return { ok: false, reason: SELF_PROMOTION.test(text || '') ? 'self-promotion' : 'not asking for a provider' };
   // Only the author's own text up to the ask: replies from vendors come after it.
   if (SELF_PROMOTION.test(ask.before)) return { ok: false, reason: 'self-promotion' };
-  if (NOT_A_REAL_ASK.test(ask.around)) return { ok: false, reason: 'rhetorical or second-hand' };
+  if (NOT_A_REAL_ASK.test(ask.around) || AWARENESS.test(cleanPostText(text))) {
+    return { ok: false, reason: 'rhetorical or second-hand' };
+  }
   // A question to the reader followed by a sales pitch is an advert.
   if (READER_QUESTION.test(ask.fromAsk) && SALES_COPY.test(cleanPostText(text))) return { ok: false, reason: 'self-promotion' };
   // The service being asked for must be in the ask itself, not elsewhere on the page.
