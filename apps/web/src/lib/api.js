@@ -175,7 +175,8 @@ export const scanAPI = {
 
 // Inbound (amzur.com visitors and form fills)
 export const inboundAPI = {
-  visitors: async (days = 30) => fetchAPI(`/api/inbound/visitors?days=${days}`),
+  visitors: async (days = 30, { includeAutomated = false } = {}) =>
+    fetchAPI(`/api/inbound/visitors?days=${days}${includeAutomated ? '&includeAutomated=true' : ''}`),
   journey: async (leadId) => fetchAPI(`/api/inbound/leads/${leadId}/journey`),
 };
 

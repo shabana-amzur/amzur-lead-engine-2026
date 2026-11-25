@@ -322,11 +322,19 @@ router.get('/visitors', async (req: Request, res: Response) => {
   try {
     const days = Math.min(Math.max(parseInt(String(req.query.days), 10) || 30, 1), 90);
     const since = new Date(Date.now() - days * 86400000);
-    const visits = await prisma.webVisit.findMany({
+    const allVisits = await prisma.webVisit.findMany({
       where: { createdAt: { gte: since } },
       orderBy: { createdAt: 'asc' },
       take: 20000,
     });
+
+    // Likely automated visitors (email link scanners opening the privacy
+    // policy, etc.) are left out unless includeAutomated=true.
+    const perVisitor = new Map<string, typeof allVisits>();
+    for (const v of allVisits) perVisitor.set(v.visitorId, [...(perVisitor.get(v.visitorId) || []), v]);
+    const automated = new Set([...perVisitor].filter(([, list]) => inbound.looksAutomated(list)).map(([id]) => id));
+    const includeAutomated = req.query.includeAutomated === 'true';
+    const visits = includeAutomated ? allVisits : allVisits.filter((v) => !automated.has(v.visitorId));
 
     const byVisitor = new Map<string, any>();
     const pageCounts = new Map<string, { path: string; title: string | null; views: number; visitors: Set<string> }>();
@@ -429,7 +437,8 @@ router.get('/visitors', async (req: Request, res: Response) => {
         .map((p) => ({ path: p.path, title: p.title, views: p.views, visitors: p.visitors.size }))
         .sort((a, b) => b.visitors - a.visitors)
         .slice(0, 10),
-      visitors: visitors.slice(0, 200),
+      hiddenAutomated: includeAutomated ? 0 : automated.size,
+      visitors: visitors.slice(0, 500),
     });
   } catch (error: any) {
     console.error('Visitors summary failed:', error?.message);

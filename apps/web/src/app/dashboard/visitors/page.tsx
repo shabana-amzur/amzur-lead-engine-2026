@@ -9,6 +9,19 @@ import { inboundAPI } from '@/lib/api';
 import { regionLabel } from '@/lib/regions';
 
 const RANGES = [7, 30, 90];
+const PAGE_SIZE = 10;
+
+// Page numbers to show: first, last, and the current page with its neighbours.
+function pageNumbers(current: number, total: number): (number | '…')[] {
+  const wanted = new Set([1, total, current - 1, current, current + 1].filter((n) => n >= 1 && n <= total));
+  const sorted = [...wanted].sort((a, b) => a - b);
+  const out: (number | '…')[] = [];
+  sorted.forEach((n, i) => {
+    if (i > 0 && n - sorted[i - 1] > 1) out.push('…');
+    out.push(n);
+  });
+  return out;
+}
 
 const when = (value: string) =>
   new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -45,9 +58,17 @@ function BarList({ rows, unit }: { rows: { key: string; label: string; value: nu
 
 export default function VisitorsPage() {
   const [days, setDays] = useState(30);
-  const { data, error } = useSWR(`/api/inbound/visitors?days=${days}`, () => inboundAPI.visitors(days));
+  const [includeAutomated, setIncludeAutomated] = useState(false);
+  const [page, setPage] = useState(1);
+  const { data, error } = useSWR(`/api/inbound/visitors?days=${days}&automated=${includeAutomated}`, () =>
+    inboundAPI.visitors(days, { includeAutomated })
+  );
   const totals = data?.totals;
   const visitors: any[] = data?.visitors || [];
+  const pageCount = Math.max(1, Math.ceil(visitors.length / PAGE_SIZE));
+  const current = Math.min(page, pageCount);
+  const shown = visitors.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
+  const hiddenAutomated: number = data?.hiddenAutomated || 0;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -68,7 +89,10 @@ export default function VisitorsPage() {
               <button
                 key={range}
                 type="button"
-                onClick={() => setDays(range)}
+                onClick={() => {
+                  setDays(range);
+                  setPage(1);
+                }}
                 className={`px-3 py-1.5 ${days === range ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'}`}
               >
                 {range} days
@@ -131,6 +155,23 @@ export default function VisitorsPage() {
             <p className="text-xs text-gray-500 mt-1">
               Visitors who haven’t filled in the form are anonymous here; company identification isn’t connected yet.
             </p>
+            {(hiddenAutomated > 0 || includeAutomated) && (
+              <p className="text-xs text-gray-500 mt-1">
+                {includeAutomated
+                  ? 'Showing likely automated visits too. '
+                  : `${hiddenAutomated} likely automated visit${hiddenAutomated === 1 ? '' : 's'} hidden: no referrer and only the privacy policy or other legal pages, typical of email link scanners. `}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIncludeAutomated((value) => !value);
+                    setPage(1);
+                  }}
+                  className="text-blue-600 hover:text-blue-800"
+                >
+                  {includeAutomated ? 'Hide them' : 'Show them'}
+                </button>
+              </p>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -154,7 +195,7 @@ export default function VisitorsPage() {
                     </td>
                   </tr>
                 )}
-                {visitors.map((v) => (
+                {shown.map((v) => (
                   <tr key={v.visitorId} className="align-top">
                     <td className="px-4 py-3 whitespace-nowrap text-gray-700">{when(v.lastSeen)}</td>
                     <td className="px-4 py-3 text-gray-700">
@@ -201,6 +242,50 @@ export default function VisitorsPage() {
               </tbody>
             </table>
           </div>
+          {visitors.length > PAGE_SIZE && (
+            <nav className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-t border-gray-100 text-sm" aria-label="Visitor pages">
+              <span className="text-xs text-gray-500">
+                Showing {(current - 1) * PAGE_SIZE + 1}–{Math.min(current * PAGE_SIZE, visitors.length)} of {visitors.length}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPage(current - 1)}
+                  disabled={current === 1}
+                  className="px-2.5 py-1 rounded-md text-gray-700 hover:bg-gray-100 disabled:text-gray-300 disabled:hover:bg-transparent"
+                >
+                  ← Prev
+                </button>
+                {pageNumbers(current, pageCount).map((n, i) =>
+                  n === '…' ? (
+                    <span key={`gap-${i}`} className="px-1.5 text-gray-400">
+                      …
+                    </span>
+                  ) : (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setPage(n)}
+                      aria-current={n === current ? 'page' : undefined}
+                      className={`min-w-[2rem] px-2 py-1 rounded-md ${
+                        n === current ? 'bg-blue-600 text-white font-medium' : 'text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  )
+                )}
+                <button
+                  type="button"
+                  onClick={() => setPage(current + 1)}
+                  disabled={current === pageCount}
+                  className="px-2.5 py-1 rounded-md text-gray-700 hover:bg-gray-100 disabled:text-gray-300 disabled:hover:bg-transparent"
+                >
+                  Next →
+                </button>
+              </div>
+            </nav>
+          )}
         </section>
       </main>
     </div>

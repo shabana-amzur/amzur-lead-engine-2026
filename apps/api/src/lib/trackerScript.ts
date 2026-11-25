@@ -16,6 +16,8 @@ export function trackerScript(apiBase: string): string {
 (function () {
   if (window.__amzurLeadTracker) return;
   window.__amzurLeadTracker = true;
+  // Browsers driven by automation (scanners, test tools) say so: skip them.
+  if (navigator.webdriver) return;
   var API = ${JSON.stringify(apiBase.replace(/\/$/, ''))};
   var tracking = window.amzurTrackingConsent !== false;
 

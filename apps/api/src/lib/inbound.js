@@ -237,6 +237,21 @@ function parseUserAgent(ua) {
   return { device, os, browser };
 }
 
+// Legal pages: people rarely open these on their own, but email security
+// scanners (e.g. Microsoft Defender Safe Links) open every link in an email,
+// and the contact form's consent text links to the privacy policy.
+const LEGAL_PAGE = /^\/(privacy|privacy-policy|cookie|cookies|cookie-policy|terms|terms-of-use|terms-and-conditions|legal|disclaimer|gdpr)(\/|$)/i;
+
+/**
+ * A visitor that looks automated, not a person: only legal pages, arrived with
+ * no referrer, and never filled in the form.
+ * @param {{ path: string, referrer?: string|null, leadId?: string|null }[]} visits one visitor's page views
+ */
+function looksAutomated(visits) {
+  if (!visits.length || visits.some((v) => v.leadId)) return false;
+  return visits.every((v) => LEGAL_PAGE.test(v.path || '')) && !visits[0].referrer;
+}
+
 /** A lead someone created by contacting Amzur (never hidden or deleted by the outbound rules). */
 const isInbound = (signals) => !!signals && signals.leadType === 'inbound_form';
 
@@ -268,6 +283,7 @@ function readFormFields(fields = []) {
 
 module.exports = {
   isInbound,
+  looksAutomated,
   parseUserAgent,
   assessEnquiry,
   INTERNAL_DOMAINS,
