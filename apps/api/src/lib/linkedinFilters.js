@@ -7,11 +7,11 @@
 // "Consultant" alone is excluded: "looking for an experienced FinOps
 // Consultant" is a job ad for a person, not a request for a firm.
 const ASK =
-  /\b(seeking recommendations?|looking for (some )?recommendations?|any recommendations|does anyone have (any )?recommendations?|can anyone recommend|could anyone recommend|can you recommend|who (would|do) you recommend|recommend (a|an) (good|reliable|trusted|solid)?\s*[^.?!]{0,40}(partner|vendor|agency|firm|company|provider|consultancy)|looking for (a|an) (good|reliable|trusted|solid|experienced)?\s*[^.?!]{0,40}(implementation partner|consulting (firm|partner|company)|consultancy|partner|vendor|agency|firm|provider|development (company|shop|team))|need (a|an) [^.?!]{0,40}(partner|vendor|agency|firm|consultancy))\b/i;
+  /\b(seeking recommendations?|looking for (some )?recommendations?|any recommendations|does anyone have (any )?recommendations?|can anyone recommend|could anyone recommend|can you recommend|who (would|do) you recommend|recommend (a|an) (good|reliable|trusted|solid)?\s*[^.?!]{0,40}(partner|vendor|agency|firm|company|provider|consultancy)|looking for (a |an )?(good|reliable|trusted|solid|experienced)?\s*[^.?!]{0,40}(implementation partner|consulting (firm|partner|company)|consultancy|partner|vendor|agency|firm|provider|development (company|shop|team))|need (a|an) [^.?!]{0,40}(partner|vendor|agency|firm|consultancy)|looking for (some )?(help|support|assistance) (with|for|on)|looking for (an? )?([\w/.+-]+ ){0,3}(app|application|software|web|website|mobile|android|ios|flutter|react native) (development|modernization|modernisation)|looking for (an? )?([\w-]+ ){0,2}(nearshore|offshore) (partner|team|support|resources?|help|vendor|company)|looking for (an? )?(hyper ?automation|automation) (partner|vendor|company|expert|experts|solution|help))\b/i;
 
 // The ask must be about something Amzur sells (checked in the text right after the ask).
 const AMZUR_SERVICE =
-  /\b(netsuite|erp|sap|s\/?4 ?hana|oracle|dynamics|crm|salesforce|cloud|aws|azure|gcp|google cloud|devops|kubernetes|software|app developers?|app development|mobile app|web app|application|development (partner|company|team|agency|firm)|developers?|\.net|full[- ]stack|automation|rpa|uipath|modernization|modernisation|legacy|mainframe|migration|data (platform|engineering|warehouse|analytics)|ai|machine learning|offshore|dedicated (team|developers)|implementation|integration|it (partner|services|consultant|support|provider)|technology (partner|consultant|provider)|tech partner|iot)\b/i;
+  /\b(netsuite|erp|sap|s\/?4 ?hana|oracle|dynamics|crm|salesforce|cloud|aws|azure|gcp|google cloud|devops|kubernetes|software|app developers?|app development|mobile app|web app|web development|website development|android|ios app|flutter|react native|application|development (partner|company|team|agency|firm)|developers?|\.net|full[- ]stack|automation|hyper ?automation|rpa|uipath|modernization|modernisation|legacy|mainframe|migration|data (platform|engineering|warehouse|analytics)|ai|machine learning|offshore|nearshore|dedicated (team|developers)|implementation|integration|it (partner|services|consultant|support|provider)|technology (partner|consultant|provider)|tech partner|iot)\b/i;
 
 // Rhetorical or second-hand phrasing around the ask.
 const NOT_A_REAL_ASK =
@@ -28,9 +28,13 @@ const AWARENESS =
 const HIRING =
   /(#hiring|#nowhiring|#jobs?\b|\bwe('| a)re hiring\b|\bnow hiring\b|\bhiring (for|a|an)\b|\bjob (type|opening|description|title)\b|\bopen (role|position)\b|\bposition:|\blocation:|\bjob type:|\bstart date\b|\b(contract|full[- ]time|part[- ]time|permanent|w2|c2c|onsite|on-site|hybrid|remote) (role|position|opportunity|job)\b|\b(share|send) (your )?(updated )?(resume|cv)\b|\bresumes?\b|\bcandidates?\b|\bapply (now|here|today)\b|\bjoin our team\b|\byears of experience\b|\b(we are|we're|i am|i'm) looking for (an? )?(experienced|skilled|talented|senior|junior|strong|passionate|seasoned)\b|\bwith (strong |deep )?(expertise|experience) in\b|\btalent acquisition\b|\brecruit(er|ers|ing|ment)\b|\bscrum master\b|\bcontract(or)? (role|position)\b)/i;
 
+// Job seekers: "looking for a Flutter developer role", "#opentowork".
+const JOB_SEEKER =
+  /(#opentowork|#open_to_work|\bopen to work\b|\bopen to (new )?(roles|opportunities|positions)\b|\blooking for (a |an )?(new )?([\w/.+-]+ ){0,4}(job|jobs|role|roles|position|positions|opportunity|opportunities|internship|employment)\b|\bseeking (a |an )?(new )?([\w/.+-]+ ){0,3}(job|role|position|employment)\b)/i;
+
 // Selling / self-promotion.
 const SELF_PROMOTION =
-  /(\b(we help|our (team|clients|services|consultants|experts|ai|platform|solution|solutions|product|products|app|tool)|contact us|dm me|book a (call|demo)|reach out to us|we offer|we (build|provide|deliver)|we have a|as a (leading|certified)|partner of the year|introducing|\d+\+ (products|projects|clients|apps) (shipped|delivered|built)|top \d+ [^.]{0,40}(companies|firms|partners|providers))\b|looking for recommendations\?)/i;
+  /(\b(we help|our (team|clients|services|consultants|experts|ai|platform|solution|solutions|product|products|app|tool)|contact us|dm me|book a (call|demo)|reach out to us|we offer|we (build|provide|deliver)|we have a|as a (leading|certified)|partner of the year|introducing|\d+\+ (products|projects|clients|apps) (shipped|delivered|built)|top \d+\+? [^.]{0,40}(companies|firms|partners|providers|agencies))\b|looking for recommendations\?)/i;
 
 // A question aimed at the reader ("Need an elite development partner?",
 // "Looking for a reliable app developer?") is how agencies advertise, unlike a
@@ -38,7 +42,7 @@ const SELF_PROMOTION =
 const READER_QUESTION = /^(need|looking for|searching for|want|struggling (with|to find))\b[^.?!]{0,90}\?/i;
 // Sales copy anywhere in the post.
 const SALES_COPY =
-  /\b(\d+\+?\s*(years|clients|customers|projects|products|apps|engineers|developers)\b|years of (engineering |industry )?(experience|excellence)|track record|our (portfolio|clients|team of|services|expertise)|we (build|provide|deliver|offer|specialize|help)|book a (call|demo|consultation)|dm (me|us)|get in touch|contact us|visit (our|us)|free consultation|let'?s (talk|connect|build))\b/i;
+  /\b(\d+\+?\s*(years|clients|customers|projects|products|apps|engineers|developers)\b|years of (engineering |industry )?(experience|excellence)|track record|our (portfolio|clients|team of|services|expertise)|we (build|provide|deliver|offer|specialize|help)|book a (call|demo|consultation)|dm (me|us)|get in touch|contact us|visit (our|us)|free consultation|let'?s (talk|connect|build)|(top|best) \d+\+?\s|\d+\+? (companies|firms|agencies|partners|vendors) (worth|to consider|you should|in [A-Z])|worth considering|put together a list|list of (the )?(top|best)|compare their)\b/i;
 
 // Words in the post URL slug that mark a job ad, e.g. /posts/name_hiring-nowhiring-finops-...
 const HIRING_URL = /linkedin\.com\/posts\/[^/]*?[_-](hiring|nowhiring|wearehiring|jobs?|jobopening|vacancy|vacancies|recruiting|recruitment|careers?|opening|openings)[-_]/i;
@@ -89,6 +93,7 @@ function findAsk(text) {
 function classifyLinkedInPost(url, text) {
   if (HIRING_URL.test(url || '')) return { ok: false, reason: 'job ad (hiring in post URL)' };
   if (HIRING.test(text || '')) return { ok: false, reason: 'job ad / recruiting' };
+  if (JOB_SEEKER.test(cleanPostText(text))) return { ok: false, reason: 'job seeker' };
   const ask = findAsk(text);
   if (!ask) return { ok: false, reason: SELF_PROMOTION.test(text || '') ? 'self-promotion' : 'not asking for a provider' };
   // Only the author's own text up to the ask: replies from vendors come after it.

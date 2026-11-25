@@ -114,7 +114,9 @@ const PROVIDERS = [
         'https://google.serper.dev/search',
         {
           q: query,
-          num: maxResults,
+          // Serper's free plan rejects more than 10 results per search
+          // ("Query pattern not allowed for free accounts").
+          num: Math.min(maxResults, 10),
           // Google's "past day/week/month" filter; results are filtered by exact age afterwards.
           ...(recentDays ? { tbs: recentDays <= 1 ? 'qdr:d' : recentDays <= 7 ? 'qdr:w' : 'qdr:m' } : {}),
         },

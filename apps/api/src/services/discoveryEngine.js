@@ -42,7 +42,9 @@ function regionalNewsSearches(region, edition, queries, { lob = 'auto', topic = 
 const OPEN_CALL_TERMS = '(RFP OR RFQ OR RFI OR tender OR "request for proposals" OR "seeks proposals" OR "invites bids")';
 
 // Words that mark a LinkedIn post as not a buying request.
-const LINKEDIN_EXCLUDE = ' -hiring -jobs -"we are hiring" -"we\'re hiring" -webinar -"register now" -"excited to announce" -"proud to announce" -"we help"';
+// Kept short: Google ignores words past 32, and the LinkedIn filters already
+// drop job ads, adverts and announcements on the full post.
+const LINKEDIN_EXCLUDE = ' -hiring -jobs -"open to work" -webinar';
 
 const SEARCHES = [
   // ---- Job postings (paid web search): hiring for the skills Amzur provides ----
@@ -192,6 +194,38 @@ const SEARCHES = [
     query: 'site:linkedin.com/posts ("can anyone recommend" OR "looking for recommendations" OR "seeking recommendations" OR "any recommendations for") ("software development company" OR "app development company" OR "development agency" OR "development partner" OR "dev shop")' + LINKEDIN_EXCLUDE,
     lob: 'Application Development',
     intent: 'Asked on LinkedIn for a development partner',
+  },
+  {
+    kind: 'linkedin',
+    depth: 'basic',
+    // Mobile / app development (Android, Flutter, app agencies)
+    query: 'site:linkedin.com/posts ("looking for" OR "can anyone recommend" OR "any recommendations for" OR "looking for recommendations") ("mobile app development" OR "mobile application development" OR "android app development" OR "Flutter app development" OR "app development agency" OR "app development company")' + LINKEDIN_EXCLUDE,
+    lob: 'Application Development',
+    intent: 'Asked on LinkedIn for a mobile / app development partner',
+  },
+  {
+    kind: 'linkedin',
+    depth: 'basic',
+    // Custom software / web application development
+    query: 'site:linkedin.com/posts ("looking for" OR "can anyone recommend" OR "any recommendations for" OR "looking for recommendations") ("custom software development" OR "web development company" OR "web application development" OR "application development partner" OR "software development company")' + LINKEDIN_EXCLUDE,
+    lob: 'Application Development',
+    intent: 'Asked on LinkedIn for custom software / web development',
+  },
+  {
+    kind: 'linkedin',
+    depth: 'basic',
+    // NetSuite nearshore / offshore support
+    query: 'site:linkedin.com/posts ("looking for" OR "can anyone recommend" OR "any recommendations") NetSuite (nearshore OR offshore)' + LINKEDIN_EXCLUDE,
+    lob: 'ERP',
+    intent: 'Asked on LinkedIn for nearshore / offshore NetSuite support',
+  },
+  {
+    kind: 'linkedin',
+    depth: 'basic',
+    // App modernization / hyperautomation (service line from the post)
+    query: 'site:linkedin.com/posts ("looking for" OR "can anyone recommend" OR "need help" OR "any recommendations") ("app modernization" OR "application modernization" OR hyperautomation OR "hyper automation")' + LINKEDIN_EXCLUDE,
+    lob: 'auto',
+    intent: 'Asked on LinkedIn for app modernization / hyperautomation',
   },
   {
     kind: 'linkedin',
@@ -380,8 +414,8 @@ const LOB_SERVICES = {
 // Order breaks ties (more specific services first).
 const LOB_KEYWORDS = [
   ['ERP', /\b(netsuite|erp|sap|oracle financials|dynamics 365)\b/gi],
-  ['Legacy Modernization', /\b(mainframe|cobol|legacy|core banking|core system|ehr|emr|meditech|expanse|epic|cerner|oracle health)\b/gi],
-  ['Process Automation', /\b(rpa|uipath|automation anywhere|process automation|workflow automation|power automate|automation engineer)\b/gi],
+  ['Legacy Modernization', /\b(mainframe|cobol|legacy|core banking|core system|ehr|emr|meditech|expanse|epic|cerner|oracle health|app modernization|application modernization)\b/gi],
+  ['Process Automation', /\b(rpa|uipath|automation anywhere|process automation|workflow automation|power automate|automation engineer|hyper ?automation)\b/gi],
   ['Solution', /\b(devops|sre|site reliability|platform engineer|kubernetes|terraform|ci\/cd)\b/gi],
   ['Cloud', /\b(cloud|aws|azure|gcp|google cloud|migration)\b/gi],
   ['Application Development', /\b(software engineer|full[- ]stack|mobile app|application development|product engineer|digital transformation)\b/gi],
@@ -713,6 +747,12 @@ async function saveLinkedInLead(search, result, seenCompanies) {
   const full = classifyLinkedInPost(url, post.body);
   if (!full.ok) {
     console.log(`   ⏭️  Skipped LinkedIn post (${full.reason}, full post): ${url}`);
+    return false;
+  }
+  // A company page asking the reader a question ("Looking for the right app
+  // partner in Chennai?") is an advert; buyers post from personal profiles.
+  if (/linkedin\.com\/company\//i.test(post.authorUrl || '') && /\?\s*$/.test((post.ask || '').trim())) {
+    console.log(`   ⏭️  Skipped LinkedIn post (company page advert): ${url}`);
     return false;
   }
 
