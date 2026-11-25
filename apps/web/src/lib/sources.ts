@@ -20,7 +20,7 @@ export function hostname(url?: string) {
 }
 
 export type LeadSource = {
-  type: 'Job posting' | 'Press release' | 'Government RFP' | 'LinkedIn post' | 'Web page';
+  type: 'Job posting' | 'Press release' | 'Government RFP' | 'LinkedIn post' | 'Website form' | 'Web page';
   where: string;
   meaning: string;
 };
@@ -59,3 +59,16 @@ export function describeSource(url?: string): LeadSource {
 }
 
 export const isLinkedInLead = (lead: any) => lead?.signals?.leadType === 'linkedin_post';
+
+// Someone who contacted Amzur through the form on amzur.com.
+export const isInboundLead = (lead: any) => lead?.signals?.leadType === 'inbound_form';
+
+export const INBOUND_SOURCE: LeadSource = {
+  type: 'Website form',
+  where: 'amzur.com',
+  meaning: 'This person contacted Amzur through the website. Reply quickly: they reached out first.',
+};
+
+/** Where a lead came from: the website form, or the URL of the original result. */
+export const leadSource = (lead: any): LeadSource =>
+  isInboundLead(lead) ? INBOUND_SOURCE : describeSource(lead?.signals?.tavilyUrl);

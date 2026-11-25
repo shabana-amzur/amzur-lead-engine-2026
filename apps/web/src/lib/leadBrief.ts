@@ -8,7 +8,7 @@
 // claims about Amzur.
 import { lobLabel } from '@/lib/lobs';
 import { isPriorityIndustry } from '@/lib/industries';
-import { isLinkedInLead } from '@/lib/sources';
+import { isInboundLead, isLinkedInLead } from '@/lib/sources';
 
 // ---------------------------------------------------------------- themes ----
 
@@ -263,7 +263,7 @@ export type Brief = {
 
 export type SequenceStep = { day: number; channel: 'Email' | 'LinkedIn' | 'Call'; title: string; subject?: string; body: string };
 export type BriefContext = {
-  kind: 'rfp' | 'job' | 'linkedin' | 'announcement';
+  kind: SignalKind;
   company: string;
   need: string;
   themes: string[];
@@ -272,10 +272,11 @@ export type BriefContext = {
   hook: string;
 };
 
-type SignalKind = 'rfp' | 'job' | 'linkedin' | 'announcement';
+type SignalKind = 'inbound' | 'rfp' | 'job' | 'linkedin' | 'announcement';
 
 function signalKind(lead: any): SignalKind {
   const s = lead.signals || {};
+  if (isInboundLead(lead)) return 'inbound';
   if (isLinkedInLead(lead)) return 'linkedin';
   if (/greenhouse\.io|lever\.co|\/\/jobs\./i.test(s.tavilyUrl || '') || s.requirement?.kind === 'job') return 'job';
   const text = `${lead.intentSignal || ''} ${s.sourceTitle || ''} ${s.requirement?.headline || ''}`;
@@ -327,6 +328,7 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
   const industry: string = lead.industry && lead.industry !== 'Other' ? lead.industry : '';
   const postedDays = s.postedAt ? Math.floor((Date.now() - new Date(s.postedAt).getTime()) / 86400000) : null;
   const role = kind === 'job' ? roleFromJob(lead) : null;
+  const inboundFirstName: string = kind === 'inbound' ? String(s.inbound?.name || '').trim().split(/\s+/)[0] || '' : '';
   const review = s.vendorStatus === 'review';
 
   // Themes found in the source, ranked by how strongly the source shows them,
@@ -371,7 +373,9 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
   const aside = [descriptor ? `${article(descriptor)} ${descriptor} organization` : '', where].filter(Boolean).join(' ');
   const who = aside ? `, ${aside},` : '';
   const what =
-    kind === 'rfp'
+    kind === 'inbound'
+      ? `contacted Amzur through amzur.com: ${quoted(need, 140)}`
+      : kind === 'rfp'
       ? `has an open call for vendors: ${quoted(need, 140)}`
       : kind === 'job'
         ? `is hiring ${role ? `a ${role}` : 'technical staff'}${themeLabels.length ? `, with the role covering ${themeLabels.slice(0, 3).join(', ')}` : ''}`
@@ -379,7 +383,9 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
           ? `publicly asked for a provider: ${quoted(need, 140)}`
           : `announced: ${quoted(need, 140)}`;
   const fitLine =
-    kind === 'job'
+    kind === 'inbound'
+      ? `They came to Amzur first, so speed matters most: reply within a few hours, before they contact other providers.`
+      : kind === 'job'
       ? `A hire means capacity they don’t have yet. Amzur can supply that capacity faster than recruiting, as ${article(service)} ${service} team rather than one person.`
       : kind === 'rfp'
         ? `The scope matches Amzur’s ${service} offering${themeLabels.length ? ` (${themeLabels.slice(0, 3).join(', ')})` : ''}, and an open call means the vendor isn’t chosen yet.`
@@ -392,6 +398,7 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
   const reasons: string[] = [];
   let points = 0;
   if (kind === 'rfp' && !review) { points += 2; reasons.push('Open call for vendors: no provider chosen yet'); }
+  if (kind === 'inbound') { points += 3; reasons.push('Contacted Amzur directly through the website'); }
   if (kind === 'linkedin') { points += 2; reasons.push('Asked publicly for a provider'); }
   if (kind === 'job') { points += 1; reasons.push(`Hiring for ${role || 'a technical role'}: capacity gap Amzur can fill`); }
   if (themes.length >= 2) { points += 1; reasons.push(`Need covers ${themes.length} Amzur capabilities (${themeLabels.slice(0, 3).join(', ')})`); }
@@ -414,6 +421,7 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
     );
   }
   if (kind === 'rfp') angles.push('Respond with a solution mapped line by line to their stated requirements, plus a phased plan that lowers delivery risk.');
+  if (kind === 'inbound') angles.push('They chose to contact Amzur: answer their exact question, refer to the pages they read before getting in touch, and offer a call quickly.');
   if (kind === 'linkedin') angles.push('Be useful first: answer their question with specific options and trade-offs before offering Amzur’s help.');
   if (industry && INDUSTRY_NOTES[industry]) angles.push(INDUSTRY_NOTES[industry].angle);
   if (REGION_NOTES[region]) angles.push(REGION_NOTES[region]);
@@ -450,7 +458,30 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
       when: 'Before outreach',
     });
   }
-  if (kind === 'rfp') {
+  if (kind === 'inbound') {
+    steps.push(
+      {
+        title: 'Reply personally',
+        detail: `Thank ${inboundFirstName || 'them'} for getting in touch, answer what they asked about ${quoted(need, 80)}, and offer two times for a 20-minute call.`,
+        when: 'Within a few hours',
+      },
+      {
+        title: 'Prepare for the call',
+        detail: `Check which Amzur pages they read before writing (below), the company profile and the ICP check, so the call starts from what they already looked at.`,
+        when: 'Before the call',
+      },
+      {
+        title: 'Discovery call',
+        detail: `Confirm scope, timeline, budget and who decides${themeLabels.length ? `, focusing on ${themeLabels.slice(0, 2).join(' and ')}` : ''}.`,
+        when: 'Within 2–3 days',
+      },
+      {
+        title: 'Short proposal',
+        detail: `Send a scoped first phase with an indicative cost for ${service}, and a relevant case study.`,
+        when: 'Within a week of the call',
+      }
+    );
+  } else if (kind === 'rfp') {
     const facts: { label: string; value: string }[] = s.requirement?.facts || [];
     const deadline = facts.find((f) => /due|deadline|closing|submission/i.test(f.label))?.value;
     steps.push(
@@ -551,6 +582,9 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
   if (kind === 'job' && postedDays !== null && postedDays > 30) risks.push('Job posted over a month ago: the role may be filled.');
   if (kind === 'job') risks.push('Some teams prefer employees over contractors. Lead with flexibility and speed rather than cost.');
   if (kind === 'rfp') risks.push('Public tenders are often price-driven with strict eligibility. Confirm Amzur qualifies before committing effort.');
+  if (kind === 'inbound' && s.inbound && !s.inbound.businessEmail) {
+    risks.push('They used a personal email address: confirm their company and role on the first reply or call.');
+  }
   if (kind === 'linkedin') {
     const comments = s.linkedinPost?.comments;
     risks.push(
@@ -561,7 +595,7 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
   }
   if (region === 'Unknown') risks.push('Location unknown: confirm the buyer is in a region Amzur serves.');
   if (industry && INDUSTRY_NOTES[industry]) risks.push(INDUSTRY_NOTES[industry].watch);
-  if (!profile.website && kind !== 'linkedin') risks.push('No verified company website or profile yet. Check the company before outreach.');
+  if (!profile.website && kind !== 'linkedin' && kind !== 'inbound') risks.push('No verified company website or profile yet. Check the company before outreach.');
 
   // ---- contacts: ICP decision makers ----
   const contacts: Brief['contacts'] = [];
@@ -574,9 +608,16 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
   }
 
   // ---- message ----
-  const greeting = kind === 'linkedin' ? `Hi ${company.split(' ')[0]},` : `Hi [Name, ${contacts[0]?.role || 'CTO'}],`;
+  const greeting =
+    kind === 'inbound'
+      ? `Hi ${inboundFirstName || 'there'},`
+      : kind === 'linkedin'
+        ? `Hi ${company.split(' ')[0]},`
+        : `Hi [Name, ${contacts[0]?.role || 'CTO'}],`;
   const hook =
-    kind === 'rfp'
+    kind === 'inbound'
+      ? `Thank you for contacting Amzur about ${clip(need, 90).replace(/[.]+$/, '')}.`
+      : kind === 'rfp'
       ? `I saw ${possessive(company)} call for proposals: ${quoted(need, 110)}.`
       : kind === 'job'
         ? `I noticed ${company} is hiring ${role ? `a ${role}` : 'engineers'}${themeLabels.length ? ` to work on ${themeLabels.slice(0, 2).join(' and ')}` : ''}.`
@@ -584,7 +625,9 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
           ? `I saw your post asking about ${clip(need.replace(/^(i'?m |we'?re )?(looking for|seeking) (some )?recommendations? (for|on) /i, ''), 90).replace(/[.]+$/, '')}.`
           : `I read about ${company}: ${quoted(need, 110)}.`;
   const offer =
-    kind === 'rfp'
+    kind === 'inbound'
+      ? `I'd be glad to help. Amzur Technologies works with teams on ${service}${themeLabels.length ? ` (${themeLabels.slice(0, 2).join(', ')})` : ''}, and I can share how similar companies approached it.`
+      : kind === 'rfp'
       ? `Amzur Technologies delivers ${service}${themeLabels.length ? `, including ${themeLabels.slice(0, 3).join(', ')}` : ''}, and we're preparing to respond. Could you confirm the right contact for clarification questions?`
       : kind === 'job'
         ? `While you recruit, Amzur Technologies can provide engineers with exactly this experience, usually within a couple of weeks, as a bridge or as a dedicated team.`
@@ -594,7 +637,9 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
   const close = kind === 'rfp' ? 'Thank you,' : 'Would a 20-minute call next week be useful?\n\nBest regards,';
   const message = {
     subject:
-      kind === 'rfp'
+      kind === 'inbound'
+        ? `Your enquiry to Amzur: ${clip(need, 60)}`
+        : kind === 'rfp'
         ? `${company}: ${clip(need, 60)}`
         : kind === 'job'
           ? `${role ? `${role} capacity` : 'Engineering capacity'} for ${company}`
@@ -649,6 +694,32 @@ function incumbentSignal(text: string, kind: string): string | null {
 
 function buildSequence(ctx: BriefContext, first: { subject: string; body: string }, incumbent: string | null): SequenceStep[] {
   const topics = ctx.themes.slice(0, 2).join(' and ') || ctx.service;
+  if (ctx.kind === 'inbound') {
+    // They wrote to Amzur: reply the same day, then follow up briefly.
+    return [
+      { day: 1, channel: 'Email', title: 'Reply (within a few hours)', subject: first.subject, body: first.body },
+      {
+        day: 1,
+        channel: 'Call',
+        title: 'Call, if they gave a phone number',
+        body: `Thank them for getting in touch about ${quote(ctx.need, 80)}. Ask: what prompted it now, what they use today, the timeline, and who else is involved. Agree a time for a fuller conversation.`,
+      },
+      {
+        day: 3,
+        channel: 'Email',
+        title: 'Follow-up with something useful',
+        subject: `Re: ${first.subject}`,
+        body: `Hi [Name],\n\nFollowing up on your enquiry. In case it helps while you plan, teams in a similar position usually start with ${topics}, and the main decisions are scope, timeline and how much to change at once.\n\nWould a 20-minute call this week work?\n\nBest regards,\n[Your name]\nAmzur Technologies`,
+      },
+      {
+        day: 7,
+        channel: 'Email',
+        title: 'Last check-in',
+        subject: `Re: ${first.subject}`,
+        body: `Hi [Name],\n\nI didn't want your enquiry to slip through. If the timing has changed, just let me know when suits, and I'll follow up then.\n\nBest regards,\n[Your name]\nAmzur Technologies`,
+      },
+    ];
+  }
   if (ctx.kind === 'rfp') {
     return [
       { day: 1, channel: 'Email', title: 'Clarification contact', subject: first.subject, body: first.body },

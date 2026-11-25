@@ -4,7 +4,7 @@ import useSWR from 'swr';
 import { leadsAPI, scanAPI } from '@/lib/api';
 import { LOB_OPTIONS, lobBadge, lobLabel } from '@/lib/lobs';
 import { INDUSTRY_OPTIONS, PRIORITY_INDUSTRIES, industryBadge, isPriorityIndustry } from '@/lib/industries';
-import { describeSource, isLinkedInLead } from '@/lib/sources';
+import { isLinkedInLead, leadSource } from '@/lib/sources';
 import { ICP_OPTIONS, SIGNAL_TYPES, SOURCE_TYPES, VENDOR_STATUS_OPTIONS, icpStatus, signalType, sourceType, vendorStatus, vendorStatusReason } from '@/lib/signals';
 import { REGION_OPTIONS, leadRegion, regionLabel } from '@/lib/regions';
 import { useRouter } from 'next/navigation';
@@ -260,6 +260,7 @@ export default function DashboardPage() {
   const highIntentLeads = leads.filter(isHighIntent).length;
   const tenderLeads = leads.filter((l: any) => signalType(l) === 'Tender / RFP');
   const tenders = tenderLeads.length;
+  const websiteEnquiries = leads.filter((l: any) => signalType(l) === 'Website enquiry').length;
   const hiringLeads = leads.filter((l: any) => signalType(l) === 'Hiring');
   const hiringCompanies = hiringLeads.length;
   const newToday = leads.filter(foundToday).length;
@@ -361,6 +362,25 @@ export default function DashboardPage() {
           >
             <span className="flex items-center gap-2"><SidebarIcon name="tender" /> Tenders</span>
             <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{tenders}</span>
+          </button>
+
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2 mt-4">amzur.com</div>
+          <button
+            type="button"
+            onClick={() => toggleFilter('signal', 'Website enquiry')}
+            className={navItemClass(filters.signal === 'Website enquiry')}
+            title="People who contacted Amzur through the website form"
+          >
+            <span className="flex items-center gap-2"><SidebarIcon name="mail" /> Enquiries</span>
+            <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">{websiteEnquiries}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push('/dashboard/visitors')}
+            className={navItemClass(false)}
+            title="Who is browsing amzur.com, where they came from and what they read"
+          >
+            <span className="flex items-center gap-2"><SidebarIcon name="globe" /> Visitors</span>
           </button>
 
           <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2 mt-4">Services</div>
@@ -709,7 +729,7 @@ export default function DashboardPage() {
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-500">
                           {(() => {
-                            const source = describeSource(lead.signals?.tavilyUrl);
+                            const source = leadSource(lead);
                             return (
                               <>
                                 <div className="text-gray-700">

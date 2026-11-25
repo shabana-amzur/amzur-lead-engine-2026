@@ -5,7 +5,7 @@ import useSWR from 'swr';
 import { apolloAPI, leadsAPI } from '@/lib/api';
 import { lobBadge, lobLabel } from '@/lib/lobs';
 import { industryBadge, isPriorityIndustry } from '@/lib/industries';
-import { describeSource, isLinkedInLead } from '@/lib/sources';
+import { isInboundLead, isLinkedInLead, leadSource } from '@/lib/sources';
 import { regionLabel } from '@/lib/regions';
 import { buildBrief, buildTimeline } from '@/lib/leadBrief';
 import { matchCaseStudies } from '@/lib/caseStudies';
@@ -15,6 +15,7 @@ import { CaseStudyMatch, OutreachSequence, WhyNowTimeline } from '@/components/L
 import ApolloContacts, { ApolloCompanyButton } from '@/components/ApolloContacts';
 import CompanyIntelligence from '@/components/CompanyIntelligence';
 import LinkedInAuthor from '@/components/LinkedInAuthor';
+import { InboundContact, InboundJourney, cameFromLabel } from '@/components/InboundPanels';
 import Icon from '@/components/SidebarIcon';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -169,9 +170,12 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   const signals = lead.signals || {};
   const context: string = signals.searchContext || '';
   const sourceUrl: string | undefined = signals.tavilyUrl;
-  const source = describeSource(sourceUrl);
+  const source = leadSource(lead);
   const company: string = lead.companyName;
   const fromLinkedIn = isLinkedInLead(lead);
+  const fromWebsite = isInboundLead(lead);
+  // The company is known (not a LinkedIn author, nor a website enquiry from a personal email address).
+  const companyKnown = !fromLinkedIn && !(fromWebsite && !signals.inbound?.businessEmail);
   // Company profile looked up by the API (description, official website, LinkedIn page).
   const profile: {
     description?: string | null;
@@ -216,6 +220,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
       job: 'Job opening',
       press: 'Announcement',
       linkedin: 'Asked on LinkedIn',
+      inbound: 'Website enquiry',
       web: source.type,
     }[requirement?.kind || ''] || source.type;
 
@@ -241,6 +246,12 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-semibold text-gray-900">{company}</h1>
+              {fromWebsite && (
+                <p className="text-sm text-gray-600 mt-1">
+                  Contacted Amzur through amzur.com{postedAt ? ` on ${formatDate(postedAt)}` : ''}, after arriving from{' '}
+                  {cameFromLabel(signals.inbound?.firstTouch)}. Reply within a few hours.
+                </p>
+              )}
               {fromLinkedIn && (
                 <p className="text-sm text-gray-600 mt-1">
                   Asked on LinkedIn{postedAt ? ` on ${formatDate(postedAt)}` : ''}.
@@ -508,6 +519,8 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
 
             {isRfp && <RfpPanel lead={lead} onChange={() => mutate()} />}
 
+            {fromWebsite && <InboundJourney lead={lead} />}
+
             <section className="bg-white border border-gray-200 rounded-lg p-6">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">How Amzur fits</h2>
               <p className="text-xs text-gray-400 mb-4">Each need below is taken from the source and mapped to what Amzur delivers.</p>
@@ -575,7 +588,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
 
             <OutreachSequence brief={brief} />
 
-            {!fromLinkedIn && <CompanyIntelligence lead={lead} onChange={() => mutate()} />}
+            {companyKnown && <CompanyIntelligence lead={lead} onChange={() => mutate()} />}
 
             <section className="bg-white border border-gray-200 rounded-lg p-6">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Where we found this</h2>
@@ -673,20 +686,24 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                     </div>
                   ))}
                 </dl>
-                {!fromLinkedIn && <ApolloCompanyButton lead={lead} onChange={() => mutate()} />}
+                {companyKnown && <ApolloCompanyButton lead={lead} onChange={() => mutate()} />}
               </section>
             )}
 
               <section className="bg-white border border-gray-200 rounded-lg p-5">
                 <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Who to contact</h2>
-                {!fromLinkedIn && (
+                {fromWebsite && <InboundContact lead={lead} />}
+                {fromWebsite && (lead.signals?.apollo?.candidates || []).length > 0 && (
+                  <div className="text-xs text-gray-400 mb-2">Others at {company}:</div>
+                )}
+                {companyKnown && (
                   <div className="mb-4 pb-4 border-b border-gray-100">
                     <ApolloContacts lead={lead} brief={brief} onChange={() => mutate()} />
                   </div>
                 )}
                 {fromLinkedIn && <LinkedInAuthor lead={lead} brief={brief} onChange={() => mutate()} />}
-                {!fromLinkedIn && <div className="text-xs text-gray-400 mb-2">Roles to target{(lead.signals?.apollo?.candidates || []).length ? ' if you need others' : ''}:</div>}
-                {!fromLinkedIn && (
+                {companyKnown && <div className="text-xs text-gray-400 mb-2">Roles to target{(lead.signals?.apollo?.candidates || []).length ? ' if you need others' : ''}:</div>}
+                {companyKnown && (
                 <ul className="space-y-3">
                   {brief.contacts.map(({ role, why }) => (
                     <li key={role} className="text-sm">
@@ -708,7 +725,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                   ))}
                 </ul>
                 )}
-                {!fromLinkedIn && (
+                {!fromLinkedIn && !fromWebsite && (
                 <div className="mt-4 pt-3 border-t border-gray-100 text-sm">
                   <div className="text-gray-500 mb-1">Email</div>
                   {reliableEmail ? (

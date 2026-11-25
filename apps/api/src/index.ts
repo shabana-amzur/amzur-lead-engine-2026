@@ -6,6 +6,7 @@ import morgan from 'morgan';
 import authRoutes from './routes/auth';
 import leadsRoutes from './routes/leads';
 import discoveryRoutes from './routes/discovery';
+import inboundRoutes from './routes/inbound';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -29,6 +30,7 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/leads', leadsRoutes);
 app.use('/api/scan', discoveryRoutes);
+app.use('/api/inbound', inboundRoutes);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

@@ -50,3 +50,28 @@ model ScanRun {
 
   @@index([startedAt])
 }
+
+// One page view on amzur.com, from the website tracker (apps/api/src/routes/inbound.ts).
+// visitorId is a random first-party id; no IP address is stored.
+model WebVisit {
+  id          String   @id
+  visitorId   String
+  sessionId   String
+  url         String
+  path        String
+  title       String?
+  referrer    String?
+  source      String?
+  medium      String?
+  campaign    String?
+  country     String?
+  city        String?
+  engagedSec  Int?
+  scrollPct   Int?
+  leadId      String?
+  createdAt   DateTime @default(now())
+
+  @@index([visitorId])
+  @@index([createdAt])
+  @@index([leadId])
+}

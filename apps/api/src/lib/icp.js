@@ -82,6 +82,8 @@ function checkIcp(lead) {
       size = { status: 'match', reason: `${count} employees: consistent with $10M–$200M revenue (revenue not confirmed)` };
     else size = { status: 'unknown', reason: `${count} employees: borderline for $10M–$200M, so confirm revenue` };
   } else if (linkedIn) size = { status: 'unknown', reason: 'Company not identified yet, so size is unknown' };
+  else if (signals.leadType === 'inbound_form' && !signals.inbound?.businessEmail)
+    size = { status: 'unknown', reason: 'Used a personal email address, so the company isn’t known yet' };
   else if (publicSector) size = { status: 'unknown', reason: 'Public body: revenue doesn’t apply, so check budget and contract size' };
   else size = { status: 'unknown', reason: 'Revenue and headcount not found, so confirm $10M–$200M revenue' };
 
@@ -114,6 +116,13 @@ function checkIcp(lead) {
     role = title
       ? { status: 'match', reason: `Author appears to be ${title[0]}` }
       : { status: 'unknown', reason: `Author’s role not confirmed. ICP contacts are a ${ROLES_TEXT}` };
+  } else if (signals.leadType === 'inbound_form') {
+    // The person who filled in the form: their title, if they gave one or Apollo found it.
+    const given = `${signals.inbound?.jobTitle || ''} ${(signals.apollo?.contacts || []).find((c) => c.email && c.email === signals.inbound?.email)?.title || ''}`;
+    const title = given.match(ICP_ROLE);
+    role = title
+      ? { status: 'match', reason: `Contact is ${title[0]}` }
+      : { status: 'unknown', reason: `Contact’s role not confirmed. ICP contacts are a ${ROLES_TEXT}` };
   } else {
     role = { status: 'match', reason: `Engage the ${ROLES_TEXT}` };
   }

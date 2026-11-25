@@ -12,7 +12,9 @@ const dryRun = process.env.DRY_RUN === '1';
 
 async function main() {
   const leads = await prisma.lead.findMany({ select: { id: true, companyName: true, employees: true, signals: true } });
+  // Inbound leads (someone contacted Amzur through amzur.com) are never removed here.
   const toDelete = leads
+    .filter((lead) => lead.signals?.leadType !== 'inbound_form')
     .map((lead) => ({
       lead,
       reason: largeEnterpriseReason(lead.companyName, lead.employees ?? lead.signals?.company?.employees ?? null),

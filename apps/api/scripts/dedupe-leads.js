@@ -17,11 +17,13 @@ function companyKey(name) {
 
 async function main() {
   const leads = await prisma.lead.findMany({
-    select: { id: true, companyName: true, leadScore: true, discoveredAt: true },
+    select: { id: true, companyName: true, leadScore: true, discoveredAt: true, signals: true },
   });
 
   const groups = new Map();
   for (const lead of leads) {
+    // Inbound leads (someone contacted Amzur through amzur.com) are never removed here.
+    if (lead.signals?.leadType === 'inbound_form') continue;
     const key = companyKey(lead.companyName);
     if (!key) continue;
     if (!groups.has(key)) groups.set(key, []);

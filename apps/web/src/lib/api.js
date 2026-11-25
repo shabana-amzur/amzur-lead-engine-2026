@@ -172,6 +172,12 @@ export const scanAPI = {
   },
 };
 
+// Inbound (amzur.com visitors and form fills)
+export const inboundAPI = {
+  visitors: async (days = 30) => fetchAPI(`/api/inbound/visitors?days=${days}`),
+  journey: async (leadId) => fetchAPI(`/api/inbound/leads/${leadId}/journey`),
+};
+
 // Health check
 export const healthCheck = async () => {
   const response = await fetch(`${API_URL}/health`);

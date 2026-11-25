@@ -928,7 +928,10 @@ export async function enrichExistingLeads(limit = 15) {
         nextSignals.companyChecked = true;
         if (found?.website) {
           data.website = found.website;
-          data.outreachEmail = `contact@${found.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '')}`;
+          // Inbound leads keep the address the person gave us.
+          if (signals.leadType !== 'inbound_form') {
+            data.outreachEmail = `contact@${found.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '')}`;
+          }
         }
         if (found?.headquarters) data.hq = found.headquarters;
         else if (lead.hq === 'USA') data.hq = null; // old placeholder, not real data
@@ -937,14 +940,17 @@ export async function enrichExistingLeads(limit = 15) {
       }
       if (!date?.ok && !requirement?.ok && !profile?.ok && !todo.geography) return;
 
-      const geo = leadGeography({
-        requirement: nextSignals.requirement,
-        profile: nextSignals.company,
-        hq: data.hq ?? lead.hq,
-        text: `${lead.companyName} ${nextSignals.sourceTitle || ''} ${nextSignals.searchContext || ''}`,
-      });
-      nextSignals.geography = geo.region;
-      nextSignals.location = geo.location;
+      // Inbound leads keep the visitor's own country (from their browser's request).
+      if (signals.leadType !== 'inbound_form' || !signals.geography || signals.geography === 'Unknown') {
+        const geo = leadGeography({
+          requirement: nextSignals.requirement,
+          profile: nextSignals.company,
+          hq: data.hq ?? lead.hq,
+          text: `${lead.companyName} ${nextSignals.sourceTitle || ''} ${nextSignals.searchContext || ''}`,
+        });
+        nextSignals.geography = geo.region;
+        nextSignals.location = geo.location;
+      }
 
       try {
         await prisma.lead.update({ where: { id: lead.id }, data: { ...data, signals: nextSignals } });
@@ -1343,5 +1349,7 @@ export async function discoverLeads({ mode = 'full', only = null } = {}) {
 
   return summary;
 }
+
+export { inferLob, classifyIndustry, LOB_SERVICES };
 
 export default { discoverLeads };

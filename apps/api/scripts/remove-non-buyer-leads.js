@@ -19,8 +19,9 @@ function companyKey(name) {
 }
 
 async function main() {
-  const leads = await prisma.lead.findMany({ select: { id: true, companyName: true } });
-  const toDelete = leads.filter((lead) => nonBuyers.has(companyKey(lead.companyName)));
+  const leads = await prisma.lead.findMany({ select: { id: true, companyName: true, signals: true } });
+  // Inbound leads (someone contacted Amzur through amzur.com) are never removed here.
+  const toDelete = leads.filter((lead) => lead.signals?.leadType !== 'inbound_form' && nonBuyers.has(companyKey(lead.companyName)));
 
   if (toDelete.length === 0) {
     console.log(`No non-buyer leads (${leads.length} leads checked).`);

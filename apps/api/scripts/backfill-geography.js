@@ -14,6 +14,8 @@ async function main() {
   let changed = 0;
   for (const lead of leads) {
     const signals = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
+    // Inbound leads keep the visitor's own country.
+    if (signals.leadType === 'inbound_form' && signals.geography && signals.geography !== 'Unknown') continue;
     const geo = leadGeography({
       requirement: signals.requirement,
       profile: signals.company,

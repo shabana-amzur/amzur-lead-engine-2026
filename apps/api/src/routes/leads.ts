@@ -45,6 +45,8 @@ const router = Router();
 // (Kenya: ERP / NetSuite only).
 const inTargetRegion = (lead: any) => {
   const s = lead.signals || {};
+  // Someone who contacted Amzur is always shown, wherever they are.
+  if (s.leadType === 'inbound_form') return true;
   if (s.geography === 'Other') return false;
   const text = [lead.intentSignal, s.sourceTitle, s.searchContext, s.requirement?.headline, s.requirement?.summary]
     .filter(Boolean)
@@ -127,7 +129,10 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     // Validate every lead against the ICP before it is shown (always current,
     // so older leads are covered without a backfill).
     const checked = open.map(withChecks);
-    const inIcp = includeOutsideIcp ? checked : checked.filter((lead: any) => lead.icp.status !== 'outside');
+    // Inbound enquiries are shown even outside the ICP: someone asked Amzur directly.
+    const inIcp = includeOutsideIcp
+      ? checked
+      : checked.filter((lead: any) => lead.icp.status !== 'outside' || lead.signals?.leadType === 'inbound_form');
     // Leads the team marked "not relevant" are hidden unless includeNotRelevant=true.
     const includeNotRelevant = req.query.includeNotRelevant === 'true';
     const visible = (includeNotRelevant ? inIcp : inIcp.filter((lead: any) => lead.signals?.workflow?.status !== 'not_relevant')).sort(
@@ -143,7 +148,10 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       olderWindow: { from: LEAD_MAX_AGE_DAYS, to: LEAD_ARCHIVE_DAYS },
       // For the sidebar: leads in the Older tab (same region / closed-job rules).
       olderCount: matching.filter(
-        (lead: any) => inOlderWindow(lead) && inTargetRegion(lead) && lead.signals?.jobOpen !== false && checkIcp(lead).status !== 'outside'
+        (lead: any) => inOlderWindow(lead) &&
+          inTargetRegion(lead) &&
+          lead.signals?.jobOpen !== false &&
+          (checkIcp(lead).status !== 'outside' || lead.signals?.leadType === 'inbound_form')
       ).length,
       hiddenOlder: matching.length - recent.length,
       hiddenOtherRegions: recent.length - inRegion.length,

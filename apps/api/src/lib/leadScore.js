@@ -2,7 +2,7 @@
 // it follows the latest data (ICP checks, Apollo contacts, age). Every point
 // has a reason the lead page can show.
 //
-//   Buying intent        up to 30  open RFP / LinkedIn ask 30, job post 20,
+//   Buying intent        up to 30  website enquiry / open RFP / LinkedIn ask 30, job post 20,
 //                                  other announcement 10, review required 5
 //   ICP                  up to 25  match 25, unverified 10
 //   Fit with Amzur       up to 15  5 per Amzur service area named in the need
@@ -31,6 +31,7 @@ const SERVICE_AREAS = [
 
 function intentPoints(lead, signals) {
   if (signals.vendorStatus === 'review') return [5, 'Vendor status unclear (review required)'];
+  if (signals.leadType === 'inbound_form') return [30, 'Contacted Amzur through amzur.com'];
   if (signals.leadType === 'linkedin_post') return [30, 'Asked publicly for a provider'];
   const text = `${lead.intentSignal || ''} ${signals.sourceTitle || ''}`;
   if (signals.vendorStatus === 'open' || /\b(rfp|rfq|rfi|tender|bids?|proposals?)\b/i.test(text)) return [30, 'Open RFP / tender: vendor not chosen'];
