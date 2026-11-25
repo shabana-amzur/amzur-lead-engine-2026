@@ -141,16 +141,48 @@ function requirementFromPost(post) {
   };
 }
 
+// The post's activity id, e.g. ...-activity-7525414761174355968-cI7 -> 7525414761174355968.
+const activityId = (url) => (String(url || '').match(/activity[-:](\d{15,25})/) || [])[1] || null;
+
 /**
- * Read a post without throwing.
+ * Whether LinkedIn says the post is gone, from its public embed address:
+ * 404 / 410 for a deleted post, 200 for a live one. A deleted post's normal
+ * page doesn't say so: it redirects to the sign-up page, which LinkedIn also
+ * does for live posts when it limits automated visitors.
+ * @returns {Promise<boolean|null>} true deleted, false live, null couldn't tell
+ */
+async function postDeletedPerEmbed(url) {
+  const id = activityId(url);
+  if (!id) return null;
+  try {
+    const response = await axios.get(`https://www.linkedin.com/embed/feed/update/urn:li:activity:${id}`, {
+      timeout: TIMEOUT_MS,
+      headers: HEADERS,
+      responseType: 'text',
+      maxRedirects: 0,
+      validateStatus: () => true,
+    });
+    if (response.status === 404 || response.status === 410) return true;
+    if (response.status === 200) return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read a post without throwing. When the page can't be read, LinkedIn's
+ * embed address decides whether the post has been deleted.
  * @returns {Promise<{ post: object|null, removed: boolean }>}
  */
 async function readLinkedInPost(url) {
   try {
-    return { post: await fetchLinkedInPost(url), removed: false };
+    const post = await fetchLinkedInPost(url);
+    if (post) return { post, removed: false };
   } catch (error) {
-    return { post: null, removed: isPostRemoved(error) };
+    if (isPostRemoved(error)) return { post: null, removed: true };
   }
+  return { post: null, removed: (await postDeletedPerEmbed(url)) === true };
 }
 
-module.exports = { fetchLinkedInPost, readLinkedInPost, isPostRemoved, requirementFromPost, structurePost };
+module.exports = { fetchLinkedInPost, readLinkedInPost, postDeletedPerEmbed, isPostRemoved, requirementFromPost, structurePost };

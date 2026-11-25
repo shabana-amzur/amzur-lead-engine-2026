@@ -5,7 +5,7 @@ import industryConfig from '../config/industries.json';
 import { findPublishedDate } from '../lib/publishedDate';
 import { findCompanyProfile } from '../lib/companyProfile';
 import { classifyLinkedInPost } from '../lib/linkedinFilters';
-import { readLinkedInPost, requirementFromPost } from '../lib/linkedinPost';
+import { readLinkedInPost, requirementFromPost, postDeletedPerEmbed } from '../lib/linkedinPost';
 import { findRequirementDetails } from '../lib/requirementDetails';
 import { searchWeb } from '../lib/searchProviders';
 import { searchNews } from '../lib/freeSources';
@@ -937,6 +937,50 @@ export async function recheckJobPostings(limit = 25) {
 }
 
 /**
+ * LinkedIn posts can be deleted after they were saved: check saved LinkedIn
+ * leads once a day through LinkedIn's public embed address (free) and mark
+ * deleted ones, which the dashboard then hides. Undecided answers are retried
+ * on the next scan.
+ */
+export async function recheckLinkedInPosts(limit = 40) {
+  const leads = await prisma.lead.findMany({ select: { id: true, signals: true } });
+  const due = leads
+    .filter((lead) => {
+      const signals = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
+      if (signals.leadType !== 'linkedin_post' || signals.linkedinPost?.removed) return false;
+      if (!isRecent(signals.postedAt, LEAD_ARCHIVE_DAYS)) return false;
+      const last = new Date(signals.linkedinPost?.checkedAt || signals.linkedinPost?.fetchedAt || 0).getTime();
+      return Date.now() - last > 24 * 3600000;
+    })
+    .slice(0, limit);
+
+  let deleted = 0;
+  await Promise.all(
+    due.map(async (lead) => {
+      const gone = await postDeletedPerEmbed(lead.signals.tavilyUrl);
+      if (gone === null) return; // couldn't tell: try again next scan
+      if (gone) deleted++;
+      const now = new Date().toISOString();
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data: {
+          signals: {
+            ...lead.signals,
+            linkedinPost: {
+              ...(lead.signals.linkedinPost || {}),
+              checkedAt: now,
+              ...(gone ? { removed: true, removedAt: now, isRequest: false, notRequestReason: 'post deleted' } : {}),
+            },
+          },
+        },
+      });
+    })
+  );
+  if (due.length) console.log(`🔗 Re-checked ${due.length} LinkedIn posts: ${deleted} deleted`);
+  return { checked: due.length, deleted };
+}
+
+/**
  * Main lead discovery engine
  */
 /**
@@ -1235,6 +1279,12 @@ export async function discoverLeads({ mode = 'full', only = null } = {}) {
           return { checked: 0, closed: 0 };
         });
 
+  // Deleted LinkedIn posts (free; every scan, including the LinkedIn refresh).
+  const linkedInStatus = await recheckLinkedInPosts(40).catch((error) => {
+    console.error('Re-checking LinkedIn posts failed:', error.message);
+    return { checked: 0, deleted: 0 };
+  });
+
   // Let older leads catch up on company profiles and posted dates (paid; full scans only).
   const enrichedExisting =
     mode === 'linkedin'
@@ -1262,6 +1312,8 @@ export async function discoverLeads({ mode = 'full', only = null } = {}) {
     enrichedExisting,
     jobsRechecked: jobStatus.checked,
     jobsClosed: jobStatus.closed,
+    linkedInRechecked: linkedInStatus.checked,
+    linkedInDeleted: linkedInStatus.deleted,
     // Every search failed: the search provider is unavailable (e.g. usage limit).
     searchUnavailable: Object.values(sourcesBreakdown).every((count) => count === 0) && lastSearchError ? lastSearchError : null,
     // Paid web search failed but free sources still ran: report it without
