@@ -364,7 +364,7 @@ export default function DashboardPage() {
             <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{tenders}</span>
           </button>
 
-          <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2 mt-4">amzur.com</div>
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider px-2 py-2 mt-4">Website opportunities</div>
           <button
             type="button"
             onClick={() => toggleFilter('signal', 'Website enquiry')}

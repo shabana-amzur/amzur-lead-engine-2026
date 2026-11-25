@@ -2,7 +2,8 @@
 // it follows the latest data (ICP checks, Apollo contacts, age). Every point
 // has a reason the lead page can show.
 //
-//   Buying intent        up to 30  website enquiry / open RFP / LinkedIn ask 30, job post 20,
+//   Buying intent        up to 30  website enquiry / open RFP / LinkedIn ask 30, job post 20 with a
+//                                  sign of outside help (contract, rollout, partners) else 10,
 //                                  other announcement 10, review required 5
 //   ICP                  up to 25  match 25, unverified 10
 //   Fit with Amzur       up to 15  5 per Amzur service area named in the need
@@ -14,6 +15,7 @@
 // CommonJS so scripts can require it too.
 const { LEAD_MAX_AGE_DAYS } = require('../config/recency');
 const { isTargetRegion } = require('./geography');
+const { assessEnquiry } = require('./inbound');
 const industryConfig = require('../config/industries.json');
 
 const PRIORITY_INDUSTRIES = new Set(industryConfig.industries.filter((i) => i.priority).map((i) => i.name));
@@ -29,14 +31,47 @@ const SERVICE_AREAS = [
   ['Integration / IT services', /\b(integrat\w+|managed services|service desk|it services|cyber ?security)\b/i],
 ];
 
+// Job posts: a plain full-time hire is weak intent (they want an employee).
+// These hints suggest outside help: a contract or interim role, a project with
+// an end (a migration, an ERP rollout, a go-live), or working with partners.
+const JOB_OUTSIDE_HELP = [
+  [/\b(contract(-to-hire)?|contractor|fixed[- ]term|interim|temporary|freelance|\d+[- ]month (contract|assignment|project)|project[- ]based|statement of work)\b/i, 'contract or interim role'],
+  [/\b((netsuite|sap|s\/4 ?hana|erp|salesforce|dynamics( 365)?|workday|oracle|crm) (implementation|rollout|roll-out|migration|go[- ]live|upgrade)|(implement|roll out|migrate to|move to) (a new |our new )?(netsuite|sap|erp|salesforce|dynamics|workday|crm))\b/i, 'system rollout or migration'],
+  [/\b(migrat(e|ing|ion) (from|to|off|of)|moderni[sz](e|ing|ation) (of )?(our|the|a|legacy)|legacy (system|platform|application)s? (replacement|modernization|migration)|go[- ]live|greenfield)\b/i, 'modernization or migration project'],
+  [/\b(implementation partners?|systems? integrators?|consultan(t|cy|cies) (partners?|firms?)|outsourc\w+|offshore (team|partner|vendor)s?|managed service providers?|third[- ]party (vendors?|partners?|consultants?))\b/i, 'works with outside partners'],
+];
+
+function jobOutsideHelp(lead, signals) {
+  const req = signals.requirement || {};
+  const text = [
+    req.headline,
+    req.summary,
+    ...(req.sections || []).flatMap((s) => [s.title, ...(s.bullets || [])]),
+    ...(req.facts || []).map((f) => `${f.label}: ${f.value}`),
+    signals.sourceTitle,
+    signals.searchContext,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const found = JOB_OUTSIDE_HELP.find(([pattern]) => pattern.test(text));
+  return found ? found[1] : null;
+}
+
 function intentPoints(lead, signals) {
   if (signals.vendorStatus === 'review') return [5, 'Vendor status unclear (review required)'];
-  if (signals.leadType === 'inbound_form') return [30, 'Contacted Amzur through amzur.com'];
+  if (signals.leadType === 'inbound_form') {
+    const { status, reason } = assessEnquiry(signals);
+    if (status !== 'genuine') return [0, reason];
+    return SERVICE_AREAS.some(([, pattern]) => pattern.test(signals.inbound?.message || ''))
+      ? [30, 'Contacted Amzur about a service Amzur sells']
+      : [20, 'Contacted Amzur (no specific service named)'];
+  }
   if (signals.leadType === 'linkedin_post') return [30, 'Asked publicly for a provider'];
   const text = `${lead.intentSignal || ''} ${signals.sourceTitle || ''}`;
   if (signals.vendorStatus === 'open' || /\b(rfp|rfq|rfi|tender|bids?|proposals?)\b/i.test(text)) return [30, 'Open RFP / tender: vendor not chosen'];
   if (/greenhouse\.io|lever\.co|\/\/jobs\./i.test(signals.tavilyUrl || '') || /^hiring\b/i.test(lead.intentSignal || '')) {
-    return [20, 'Hiring for a role Amzur can staff'];
+    const hint = jobOutsideHelp(lead, signals);
+    return hint ? [20, `Hiring with a sign of outside help (${hint})`] : [10, 'Hiring an employee (no sign they want outside help)'];
   }
   return [10, 'Technology announcement'];
 }
@@ -49,6 +84,12 @@ function scoreLead(lead, icp) {
   const signals = lead.signals && typeof lead.signals === 'object' ? lead.signals : {};
   const breakdown = [];
 
+  // Internal tests, junk and sales pitches sent through the website form score 0.
+  if (signals.leadType === 'inbound_form') {
+    const { status, reason } = assessEnquiry(signals);
+    if (status !== 'genuine') return { score: 0, breakdown: [{ label: reason, points: 0, max: 100 }] };
+  }
+
   const [intent, intentLabel] = intentPoints(lead, signals);
   breakdown.push({ label: intentLabel, points: intent, max: 30 });
 
@@ -60,9 +101,13 @@ function scoreLead(lead, icp) {
   });
 
   const req = signals.requirement || {};
-  const needText = [req.headline, req.summary, ...(req.sections || []).flatMap((s) => s.bullets || []), signals.sourceTitle, signals.searchContext]
-    .filter(Boolean)
-    .join(' ');
+  // A website enquiry is judged on the person's own message, not the page they sent it from.
+  const needText =
+    signals.leadType === 'inbound_form'
+      ? signals.inbound?.message || ''
+      : [req.headline, req.summary, ...(req.sections || []).flatMap((s) => s.bullets || []), signals.sourceTitle, signals.searchContext]
+          .filter(Boolean)
+          .join(' ');
   const areas = SERVICE_AREAS.filter(([, pattern]) => pattern.test(needText)).map(([name]) => name);
   breakdown.push({
     label: areas.length ? `Need matches Amzur services: ${areas.slice(0, 3).join(', ')}` : 'No specific Amzur service named',
@@ -92,4 +137,4 @@ function scoreLead(lead, icp) {
   return { score, breakdown };
 }
 
-module.exports = { scoreLead };
+module.exports = { scoreLead, jobOutsideHelp };

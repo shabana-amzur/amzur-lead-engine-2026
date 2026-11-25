@@ -164,6 +164,79 @@ function headlineFrom(message, fallback) {
   return clip(first, 140);
 }
 
+// Amzur's own addresses: a form sent from these is a test, never a lead.
+const INTERNAL_DOMAINS = (process.env.INBOUND_INTERNAL_DOMAINS || 'amzur.com')
+  .split(',')
+  .map((d) => d.trim().toLowerCase())
+  .filter(Boolean);
+
+// Messages that carry no request: "test", "hi", "asdf", "123".
+const TEST_MESSAGE = /^(test(ing)?|this is a test|test (message|enquiry|inquiry|submission|form)|hi+|hello|hey|asdf\w*|qwerty|sample|demo|check(ing)?|ok(ay)?|abc|xyz|na|n\/a|none|nil|\.+|-+|\d+)[\s.!?]*$/i;
+// Vendors selling to Amzur through the contact form.
+const SALES_PITCH =
+  /\b(seo (services|agency|expert)|backlinks?|link[- ]building|guest post(ing)?|rank (your|on) (website|google|the first page)|first page of google|increase your (traffic|sales|leads)|lead generation services|web design services|white[- ]label|we (offer|provide) (affordable|cheap|dedicated|skilled|top)|(i|we) (am|are) reaching out to offer|our company (offers|provides)|hire (our )?(dedicated )?developers from us|outsourc\w+ partner for your|crypto|casino|forex|loan offer)\b/i;
+
+/**
+ * Judge a website enquiry: an internal test, a test / junk message, a vendor
+ * selling to Amzur, or a genuine enquiry.
+ * @returns {{ status: 'internal'|'junk'|'pitch'|'genuine', reason: string }}
+ */
+function assessEnquiry(signals = {}) {
+  const inbound = signals.inbound || {};
+  const domain = emailDomain(inbound.email);
+  if (INTERNAL_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) {
+    return { status: 'internal', reason: `Sent from an Amzur address (${domain}): an internal test` };
+  }
+  const message = String(inbound.message || '').replace(/\s+/g, ' ').trim();
+  const words = message.split(' ').filter((w) => /[a-z]{2,}/i.test(w));
+  if (!message || TEST_MESSAGE.test(message) || /^(test|asdf|qwerty)/i.test(inbound.name || '') || words.length < 4) {
+    return { status: 'junk', reason: message ? 'Message too short to be a real request; looks like a test or spam' : 'No message' };
+  }
+  if (SALES_PITCH.test(message)) return { status: 'pitch', reason: 'Reads like a vendor selling to Amzur, not a buyer' };
+  return { status: 'genuine', reason: 'Genuine enquiry' };
+}
+
+/**
+ * Device, operating system and browser from a browser's user-agent string.
+ * @returns {{ device: 'Mobile'|'Tablet'|'Desktop'|null, os: string|null, browser: string|null }}
+ */
+function parseUserAgent(ua) {
+  const text = String(ua || '');
+  if (!text) return { device: null, os: null, browser: null };
+  const device = /iPad|Tablet|PlayBook|Silk|(Android(?!.*Mobile))/i.test(text)
+    ? 'Tablet'
+    : /Mobi|iPhone|iPod|Android.*Mobile|Windows Phone|BlackBerry|Opera Mini/i.test(text)
+      ? 'Mobile'
+      : 'Desktop';
+  const os = /Windows NT/i.test(text)
+    ? 'Windows'
+    : /iPhone|iPad|iPod/i.test(text)
+      ? 'iOS'
+      : /Mac OS X|Macintosh/i.test(text)
+        ? 'macOS'
+        : /Android/i.test(text)
+          ? 'Android'
+          : /CrOS/i.test(text)
+            ? 'ChromeOS'
+            : /Linux/i.test(text)
+              ? 'Linux'
+              : null;
+  const browser = /Edg\//i.test(text)
+    ? 'Edge'
+    : /OPR\/|Opera/i.test(text)
+      ? 'Opera'
+      : /SamsungBrowser/i.test(text)
+        ? 'Samsung Internet'
+        : /Firefox|FxiOS/i.test(text)
+          ? 'Firefox'
+          : /Chrome|CriOS/i.test(text)
+            ? 'Chrome'
+            : /Safari/i.test(text)
+              ? 'Safari'
+              : null;
+  return { device, os, browser };
+}
+
 /** A lead someone created by contacting Amzur (never hidden or deleted by the outbound rules). */
 const isInbound = (signals) => !!signals && signals.leadType === 'inbound_form';
 
@@ -195,6 +268,9 @@ function readFormFields(fields = []) {
 
 module.exports = {
   isInbound,
+  parseUserAgent,
+  assessEnquiry,
+  INTERNAL_DOMAINS,
   ALLOWED_HOSTS,
   isAllowedPage,
   classifySource,

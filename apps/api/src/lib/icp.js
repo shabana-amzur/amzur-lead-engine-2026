@@ -82,7 +82,7 @@ function checkIcp(lead) {
       size = { status: 'match', reason: `${count} employees: consistent with $10M–$200M revenue (revenue not confirmed)` };
     else size = { status: 'unknown', reason: `${count} employees: borderline for $10M–$200M, so confirm revenue` };
   } else if (linkedIn) size = { status: 'unknown', reason: 'Company not identified yet, so size is unknown' };
-  else if (signals.leadType === 'inbound_form' && !signals.inbound?.businessEmail)
+  else if (signals.leadType === 'inbound_form' && !signals.inbound?.businessEmail && !signals.inbound?.company)
     size = { status: 'unknown', reason: 'Used a personal email address, so the company isn’t known yet' };
   else if (publicSector) size = { status: 'unknown', reason: 'Public body: revenue doesn’t apply, so check budget and contract size' };
   else size = { status: 'unknown', reason: 'Revenue and headcount not found, so confirm $10M–$200M revenue' };

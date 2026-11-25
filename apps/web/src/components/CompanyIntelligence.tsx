@@ -75,12 +75,20 @@ function Fact({ label, source, children }: { label: string; source?: Source; chi
   );
 }
 
-export default function CompanyIntelligence({ lead, onChange }: { lead: any; onChange: () => void }) {
+export default function CompanyIntelligence({
+  lead,
+  onChange,
+  showNews = true,
+}: {
+  lead: any;
+  onChange: () => void;
+  showNews?: boolean;
+}) {
   const company: string = lead.companyName;
   const profile = lead.signals?.company || {};
   const intel: Intel | null = lead.signals?.apollo?.company || null;
   const { data: status } = useSWR('/api/leads/apollo/status', () => apolloAPI.status());
-  const { data: news, error: newsError } = useSWR(`/api/leads/${lead.id}/company/news`, () => apolloAPI.companyNews(lead.id), {
+  const { data: news, error: newsError } = useSWR(showNews ? `/api/leads/${lead.id}/company/news` : null, () => apolloAPI.companyNews(lead.id), {
     revalidateOnFocus: false,
   });
   const [busy, setBusy] = useState(false);
@@ -284,6 +292,7 @@ export default function CompanyIntelligence({ lead, onChange }: { lead: any; onC
         </p>
       )}
 
+      {showNews && (
       <div className="mt-5 pt-4 border-t border-gray-100">
         <h3 className="text-sm font-medium text-gray-700 mb-2">Recent news</h3>
         {!news && !newsError ? (
@@ -307,6 +316,7 @@ export default function CompanyIntelligence({ lead, onChange }: { lead: any; onC
           <p className="text-sm text-gray-500">No news about {company} in the last 90 days.</p>
         )}
       </div>
+      )}
     </section>
   );
 }

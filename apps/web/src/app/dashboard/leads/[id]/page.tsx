@@ -15,7 +15,7 @@ import { CaseStudyMatch, OutreachSequence, WhyNowTimeline } from '@/components/L
 import ApolloContacts, { ApolloCompanyButton } from '@/components/ApolloContacts';
 import CompanyIntelligence from '@/components/CompanyIntelligence';
 import LinkedInAuthor from '@/components/LinkedInAuthor';
-import { InboundContact, InboundJourney, cameFromLabel } from '@/components/InboundPanels';
+import { InboundContact, InboundJourney, InboundSummary, cameFromLabel, deviceLabel } from '@/components/InboundPanels';
 import Icon from '@/components/SidebarIcon';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -113,6 +113,17 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   const { id } = use(params);
 
   const { data, error, mutate } = useSWR(`/api/leads/${id}`, () => leadsAPI.getById(id));
+  // Website enquiries open in a short view; the full analysis is one click away.
+  const [showFullInbound, setShowFullInbound] = useState(false);
+  // ?view=full (set by "Show full analysis") keeps the full view on refresh or in a shared link.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('view') === 'full') setShowFullInbound(true);
+  }, []);
+  const openFullInbound = () => {
+    setShowFullInbound(true);
+    window.history.replaceState(null, '', `${window.location.pathname}?view=full`);
+    window.scrollTo(0, 0);
+  };
 
   // LinkedIn leads: read the full public post once (free) for a detailed
   // "What they need"; older leads only have the search snippet.
@@ -175,7 +186,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   const fromLinkedIn = isLinkedInLead(lead);
   const fromWebsite = isInboundLead(lead);
   // The company is known (not a LinkedIn author, nor a website enquiry from a personal email address).
-  const companyKnown = !fromLinkedIn && !(fromWebsite && !signals.inbound?.businessEmail);
+  const companyKnown = !fromLinkedIn && !(fromWebsite && !signals.inbound?.businessEmail && !signals.inbound?.company);
   // Company profile looked up by the API (description, official website, LinkedIn page).
   const profile: {
     description?: string | null;
@@ -236,6 +247,18 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
 
   const actionLink = 'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50';
 
+
+  if (fromWebsite && !showFullInbound) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <main className="max-w-6xl mx-auto px-6 py-6">
+          <div className="mb-4">{backButton}</div>
+          <InboundSummary lead={lead} reply={brief.message} onShowFull={openFullInbound} onChange={() => mutate()} />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <main className="max-w-6xl mx-auto px-6 py-6">
@@ -249,7 +272,8 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               {fromWebsite && (
                 <p className="text-sm text-gray-600 mt-1">
                   Contacted Amzur through amzur.com{postedAt ? ` on ${formatDate(postedAt)}` : ''}, after arriving from{' '}
-                  {cameFromLabel(signals.inbound?.firstTouch)}. Reply within a few hours.
+                  {cameFromLabel(signals.inbound?.firstTouch)}
+                  {deviceLabel(signals.inbound?.device) ? `, on ${deviceLabel(signals.inbound?.device)}` : ''}. Reply within a few hours.
                 </p>
               )}
               {fromLinkedIn && (
@@ -321,6 +345,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
             >
               <Icon name="search" className="w-3.5 h-3.5" /> Search the web
             </a>
+            {!fromWebsite && (
             <a
               href={`https://news.google.com/search?q=${encodeURIComponent(`"${company}"`)}`}
               target="_blank"
@@ -329,6 +354,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
             >
               <Icon name="news" className="w-3.5 h-3.5" /> Recent news
             </a>
+            )}
           </div>
         </div>
 
@@ -588,7 +614,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
 
             <OutreachSequence brief={brief} />
 
-            {companyKnown && <CompanyIntelligence lead={lead} onChange={() => mutate()} />}
+            {companyKnown && <CompanyIntelligence lead={lead} onChange={() => mutate()} showNews={!fromWebsite} />}
 
             <section className="bg-white border border-gray-200 rounded-lg p-6">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Where we found this</h2>

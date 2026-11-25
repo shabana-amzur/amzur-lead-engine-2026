@@ -106,6 +106,7 @@ router.post('/event', async (req: Request, res: Response) => {
     }
     const where = inbound.classifySource({ referrer: event.referrer, utm: event.utm || {}, pageUrl: event.url });
     const { country, city } = locationOf(req);
+    const { device, os, browser } = inbound.parseUserAgent(header(req, 'user-agent'));
     // A visitor who already filled in the form stays linked to their lead.
     const known = await prisma.webVisit.findFirst({ where: { visitorId: event.visitorId, leadId: { not: null } }, select: { leadId: true } });
     await prisma.webVisit.create({
@@ -122,6 +123,9 @@ router.post('/event', async (req: Request, res: Response) => {
         campaign: where.campaign,
         country,
         city,
+        device,
+        os,
+        browser,
         leadId: known?.leadId || null,
       },
     });
@@ -147,6 +151,7 @@ router.post('/form', async (req: Request, res: Response) => {
 
     const visitorId = ID.test(event.visitorId || '') ? event.visitorId : null;
     const { country, city } = locationOf(req);
+    const device = inbound.parseUserAgent(header(req, 'user-agent'));
     const now = new Date();
     const submission = {
       at: now.toISOString(),
@@ -154,6 +159,7 @@ router.post('/form', async (req: Request, res: Response) => {
       pageUrl: inbound.clip(event.pageUrl, 1000),
       pageTitle: event.pageTitle ? inbound.clip(event.pageTitle, 300) : null,
       formId: event.formId ? String(event.formId).slice(0, 40) : null,
+      device,
     };
 
     // First touch: the visitor's earliest tracked page view, else what the browser kept.
@@ -204,6 +210,9 @@ router.post('/form', async (req: Request, res: Response) => {
               message,
               pageUrl: submission.pageUrl,
               submittedAt: submission.at,
+              device,
+              country: country || previous.country,
+              city: city || previous.city,
               consentMarketing: !!event.consentMarketing || !!previous.consentMarketing,
               submissions: [...(previous.submissions || []), submission].slice(-20),
               visitorIds: [...new Set([...(previous.visitorIds || []), visitorId].filter(Boolean))].slice(-10),
@@ -220,7 +229,8 @@ router.post('/form', async (req: Request, res: Response) => {
       const domain = inbound.emailDomain(fields.email);
       const businessEmail = inbound.isBusinessEmail(fields.email);
       const company = fields.company || (businessEmail ? inbound.companyFromDomain(domain) : null);
-      const text = `${fields.message} ${fields.company} ${submission.pageTitle || ''}`;
+      // The person's own words only: the form page's title ("IT Solutions and Cloud Services") isn't their need.
+      const text = `${fields.message} ${fields.company}`;
       const lob = inferLob(text);
       const industry = classifyIndustry(text, company || '');
       const region = inbound.regionOfCountry(country);
@@ -286,6 +296,7 @@ router.post('/form', async (req: Request, res: Response) => {
               consentMarketing: !!event.consentMarketing,
               country,
               city,
+              device,
               firstTouch,
               submissions: [submission],
               visitorIds: visitorId ? [visitorId] : [],
@@ -333,6 +344,9 @@ router.get('/visitors', async (req: Request, res: Response) => {
           landingPage: v.path,
           country: v.country,
           city: v.city,
+          device: v.device,
+          os: v.os,
+          browser: v.browser,
           sessions: new Set<string>(),
           pages: [] as { path: string; title: string | null; at: Date; engagedSec: number | null }[],
           engagedSec: 0,
@@ -361,9 +375,14 @@ router.get('/visitors', async (req: Request, res: Response) => {
 
     const leadIds = [...new Set([...byVisitor.values()].map((v) => v.leadId).filter(Boolean))] as string[];
     const leads = leadIds.length
-      ? await prisma.lead.findMany({ where: { id: { in: leadIds } }, select: { id: true, companyName: true } })
+      ? await prisma.lead.findMany({ where: { id: { in: leadIds } }, select: { id: true, companyName: true, signals: true } })
       : [];
-    const leadName = new Map(leads.map((lead) => [lead.id, lead.companyName]));
+    const leadName = new Map(
+      leads.map((lead) => [
+        lead.id,
+        inbound.assessEnquiry(lead.signals || {}).status === 'internal' ? `${lead.companyName} (internal test)` : lead.companyName,
+      ])
+    );
 
     const visitors = [...byVisitor.values()]
       .map((v) => ({
@@ -376,6 +395,9 @@ router.get('/visitors', async (req: Request, res: Response) => {
         country: v.country,
         region: inbound.regionOfCountry(v.country),
         city: v.city,
+        device: v.device,
+        os: v.os,
+        browser: v.browser,
         sessions: v.sessions.size,
         pageViews: v.pages.length,
         engagedSec: v.engagedSec,
@@ -397,7 +419,7 @@ router.get('/visitors', async (req: Request, res: Response) => {
         visitors: visitors.length,
         returning: visitors.filter((v) => v.sessions > 1).length,
         pageViews: visits.length,
-        formFills: visitors.filter((v) => v.leadId).length,
+        formFills: visitors.filter((v) => v.leadId && !/\(internal test\)$/.test(v.leadName || '')).length,
       },
       sources: [...sourceCounts.entries()]
         .map(([label, ids]) => ({ label, visitors: ids.size }))
@@ -433,6 +455,11 @@ router.get('/leads/:id/journey', async (req: Request, res: Response) => {
         sessionId: v.sessionId,
         engagedSec: v.engagedSec,
         scrollPct: v.scrollPct,
+        device: v.device,
+        os: v.os,
+        browser: v.browser,
+        country: v.country,
+        city: v.city,
       })),
     });
   } catch (error: any) {

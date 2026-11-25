@@ -328,6 +328,8 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
   const industry: string = lead.industry && lead.industry !== 'Other' ? lead.industry : '';
   const postedDays = s.postedAt ? Math.floor((Date.now() - new Date(s.postedAt).getTime()) / 86400000) : null;
   const role = kind === 'job' ? roleFromJob(lead) : null;
+  // Website enquiries the API judged a test, spam or a sales pitch.
+  const enquiryIssue: string | null = kind === 'inbound' && lead.enquiry && lead.enquiry.status !== 'genuine' ? lead.enquiry.reason : null;
   const inboundFirstName: string = kind === 'inbound' ? String(s.inbound?.name || '').trim().split(/\s+/)[0] || '' : '';
   const review = s.vendorStatus === 'review';
 
@@ -384,7 +386,9 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
           : `announced: ${quoted(need, 140)}`;
   const fitLine =
     kind === 'inbound'
-      ? `They came to Amzur first, so speed matters most: reply within a few hours, before they contact other providers.`
+      ? enquiryIssue
+        ? `${enquiryIssue}. Check it before spending time on a reply.`
+        : `They came to Amzur first, so speed matters most: reply within a few hours, before they contact other providers.`
       : kind === 'job'
       ? `A hire means capacity they don’t have yet. Amzur can supply that capacity faster than recruiting, as ${article(service)} ${service} team rather than one person.`
       : kind === 'rfp'
@@ -398,7 +402,8 @@ export function buildBrief(lead: any, options: { possibleVendor?: boolean } = {}
   const reasons: string[] = [];
   let points = 0;
   if (kind === 'rfp' && !review) { points += 2; reasons.push('Open call for vendors: no provider chosen yet'); }
-  if (kind === 'inbound') { points += 3; reasons.push('Contacted Amzur directly through the website'); }
+  if (kind === 'inbound' && !enquiryIssue) { points += 3; reasons.push('Contacted Amzur directly through the website'); }
+  if (enquiryIssue) { points -= 5; reasons.push(enquiryIssue); }
   if (kind === 'linkedin') { points += 2; reasons.push('Asked publicly for a provider'); }
   if (kind === 'job') { points += 1; reasons.push(`Hiring for ${role || 'a technical role'}: capacity gap Amzur can fill`); }
   if (themes.length >= 2) { points += 1; reasons.push(`Need covers ${themes.length} Amzur capabilities (${themeLabels.slice(0, 3).join(', ')})`); }

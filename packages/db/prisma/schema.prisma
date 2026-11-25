@@ -66,6 +66,9 @@ model WebVisit {
   campaign    String?
   country     String?
   city        String?
+  device      String?
+  os          String?
+  browser     String?
   engagedSec  Int?
   scrollPct   Int?
   leadId      String?

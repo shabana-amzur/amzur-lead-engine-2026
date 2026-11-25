@@ -138,7 +138,7 @@ export default function VisitorsPage() {
                 <tr>
                   <th className="px-4 py-2 font-medium">Last seen</th>
                   <th className="px-4 py-2 font-medium">Came from</th>
-                  <th className="px-4 py-2 font-medium">Location</th>
+                  <th className="px-4 py-2 font-medium">Location · device</th>
                   <th className="px-4 py-2 font-medium text-right">Visits</th>
                   <th className="px-4 py-2 font-medium text-right">Pages</th>
                   <th className="px-4 py-2 font-medium text-right">Reading</th>
@@ -169,6 +169,9 @@ export default function VisitorsPage() {
                         </>
                       ) : (
                         <span className="text-gray-400">Unknown</span>
+                      )}
+                      {(v.device || v.browser) && (
+                        <div className="text-xs text-gray-500">{[v.device, [v.browser, v.os].filter(Boolean).join(' on ')].filter(Boolean).join(' · ')}</div>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-gray-700">{v.sessions}</td>

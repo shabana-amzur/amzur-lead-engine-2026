@@ -219,9 +219,14 @@ function phonesFrom(person) {
  * Apollo for their phone numbers (extra credits when found); Apollo sends
  * those to the webhook a little later.
  */
-async function revealContact(personId, { webhookUrl, linkedinUrl } = {}) {
-  // By Apollo id, or by LinkedIn profile URL (e.g. the author of a LinkedIn post).
-  const body = linkedinUrl ? { linkedin_url: linkedinUrl, reveal_personal_emails: false } : { id: personId, reveal_personal_emails: false };
+async function revealContact(personId, { webhookUrl, linkedinUrl, email } = {}) {
+  // By Apollo id, by LinkedIn profile URL (the author of a LinkedIn post), or by
+  // email (someone who contacted Amzur through the website).
+  const body = email
+    ? { email, reveal_personal_emails: false }
+    : linkedinUrl
+      ? { linkedin_url: linkedinUrl, reveal_personal_emails: false }
+      : { id: personId, reveal_personal_emails: false };
   if (webhookUrl) Object.assign(body, { reveal_phone_number: true, webhook_url: webhookUrl });
   const data = await apollo('people/match', body);
   const person = data.person;
@@ -232,6 +237,10 @@ async function revealContact(personId, { webhookUrl, linkedinUrl } = {}) {
     id: person.id,
     name: person.name || [person.first_name, person.last_name].filter(Boolean).join(' '),
     title: person.title || null,
+    headline: person.headline || null,
+    seniority: person.seniority || null,
+    departments: person.departments || [],
+    photoUrl: person.photo_url || null,
     email: person.email && !/^email_not_unlocked/i.test(person.email) ? person.email : null,
     emailStatus: person.email_status || null,
     linkedinUrl: person.linkedin_url || null,
@@ -355,9 +364,12 @@ async function addContactToSequence({ contact, companyName, sequenceId, mailboxI
 const revealByLinkedIn = (linkedinUrl, options = {}) =>
   revealContact(null, { ...options, linkedinUrl: String(linkedinUrl).replace(/^https?:\/\/[a-z]{2,3}\.linkedin\.com/i, 'https://www.linkedin.com').replace(/\/$/, '') });
 
+const revealByEmail = (email) => revealContact(null, { email: String(email).trim().toLowerCase() });
+
 module.exports = {
   isConfigured,
   revealByLinkedIn,
+  revealByEmail,
   findDecisionMakers,
   revealContact,
   enrichCompany,

@@ -123,6 +123,7 @@ export const apolloAPI = {
     fetchAPI(`/api/leads/${leadId}/contacts/reveal`, { method: 'POST', body: JSON.stringify({ personId, type }) }),
   enrichCompany: async (leadId) => fetchAPI(`/api/leads/${leadId}/company/enrich`, { method: 'POST' }),
   // LinkedIn leads: the post's author by their LinkedIn profile ('email': 1 credit; 'phone': more).
+  lookupEnquirer: async (leadId) => fetchAPI(`/api/leads/${leadId}/inbound/lookup-person`, { method: 'POST' }),
   revealAuthor: async (leadId, type = 'email') =>
     fetchAPI(`/api/leads/${leadId}/linkedin/reveal-author`, { method: 'POST', body: JSON.stringify({ type }) }),
   // Free: the full public LinkedIn post behind a LinkedIn lead, read once.

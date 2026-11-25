@@ -1,5 +1,4 @@
 import axios from 'axios';
-import OpenAI from 'openai';
 import prisma from '../lib/prisma';
 import nonBuyers from '../config/non-buyers.json';
 import industryConfig from '../config/industries.json';
@@ -17,11 +16,6 @@ import { isJobOpen, jobApiUrl } from '../lib/jobStatus';
 import { classifyVendorIntent, headlineShowsVendorChosen } from '../lib/vendorIntent';
 import { largeEnterpriseReason } from '../lib/largeEnterprise';
 import { checkIcp } from '../lib/icp';
-
-// OpenAI client for scoreWithOpenAI (not yet used by the scan). Created only
-// when a key is configured: constructing it without one throws, which would
-// break every scan even though discovery itself only needs Tavily.
-const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
 // Searches for genuine buying intent, tagged with the line of business (LOB)
 // and Amzur service each one feeds. Every LOB on the dashboard needs at least
@@ -616,68 +610,6 @@ function extractCompanyName(result) {
   }
   
   return null;
-}
-
-/**
- * Score and analyze lead using OpenAI GPT-4
- */
-async function scoreWithOpenAI(companyData, searchContext) {
-  try {
-    const prompt = `Analyze this company as a potential lead for Amzur Technologies, a cloud infrastructure and DevOps consulting company.
-
-Company Information:
-- Name: ${companyData.companyName}
-- Website: ${companyData.website}
-- Search Context: ${searchContext?.substring(0, 800)}
-
-Based on the search context, determine:
-1. The company's actual industry (FinTech, Healthcare, SaaS, E-commerce, etc.)
-2. Intent signals (hiring, funding, RFP, modernization, cloud migration)
-3. Which Amzur service fits best: Cloud & MSP, NetSuite & ERP, Solution Engineering, Application Development, Legacy Modernization, Process Automation, or India Dedicated Teams
-4. Lead quality score (1-100)
-
-Return ONLY valid JSON with this exact structure:
-{
-  "score": <number 1-100>,
-  "industry": "<actual industry detected from context>",
-  "lob": "<primary line of business: Cloud, ERP, Solution, Application Development, Legacy Modernization, Process Automation, or Offshore>",
-  "recommendedService": "<specific Amzur service recommendation>",
-  "intentSignal": "<concise buying signal, e.g., 'Hiring 5 DevOps engineers' or 'ERP modernization RFP'>",
-  "whyThisLead": ["<specific reason 1>", "<specific reason 2>", "<specific reason 3>"],
-  "outreachEmail": "<best guess email like info@domain.com or careers@domain.com>"
-}`;
-
-    if (!openai) throw new Error("OPENAI_API_KEY is not set");
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a B2B lead qualification expert. Analyze the search context to extract real company signals. Return only valid JSON, no markdown.',
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      temperature: 0.3,
-      response_format: { type: 'json_object' },
-    });
-
-    const result = JSON.parse(completion.choices[0].message.content);
-    return result;
-  } catch (error) {
-    console.error(`OpenAI scoring error:`, error.message);
-    return {
-      score: 50,
-      industry: 'Technology',
-      lob: 'Cloud',
-      recommendedService: 'Cloud Migration Services',
-      intentSignal: 'Discovery scan',
-      whyThisLead: ['Found via search'],
-      outreachEmail: `contact@${companyData.website.replace('https://', '')}`,
-    };
-  }
 }
 
 // Organization that is asking for a provider in a headline, e.g.

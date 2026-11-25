@@ -7,6 +7,8 @@ const { LEAD_MAX_AGE_DAYS, LEAD_ARCHIVE_DAYS, isRecent, ageInDays } = require('.
 const { checkIcp } = require('../lib/icp');
 const { regionAllows } = require('../lib/geography');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
+const { assessEnquiry } = require('../lib/inbound');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const apollo = require('../lib/apollo');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { scoreLead } = require('../lib/leadScore');
@@ -16,7 +18,9 @@ const { scoreLead } = require('../lib/leadScore');
 function withChecks(lead: any) {
   const icp = checkIcp(lead);
   const score = scoreLead(lead, icp);
-  return { ...lead, icp, leadScore: score.score, scoreBreakdown: score.breakdown };
+  // Website enquiries: internal test, junk, sales pitch or genuine.
+  const enquiry = lead.signals?.leadType === 'inbound_form' ? assessEnquiry(lead.signals) : undefined;
+  return { ...lead, icp, leadScore: score.score, scoreBreakdown: score.breakdown, ...(enquiry ? { enquiry } : {}) };
 }
 
 // Apollo credits are spent only when someone clicks Reveal (email / phone)
@@ -122,6 +126,8 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       ? inRegion
       : inRegion.filter(
           (lead: any) =>
+            // Forms sent from an Amzur address are internal tests.
+            !(lead.signals?.leadType === 'inbound_form' && assessEnquiry(lead.signals).status === 'internal') &&
             lead.signals?.jobOpen !== false &&
             !lead.signals?.linkedinPost?.removed &&
             lead.signals?.linkedinPost?.isRequest !== false
@@ -412,6 +418,47 @@ router.post('/:id/linkedin/reveal-author', async (req: AuthRequest, res: Respons
     if (author.email) data.outreachEmail = author.email;
     await prisma.lead.update({ where: { id: lead.id }, data });
     res.json({ author });
+  } catch (error) {
+    apolloFailure(res, error);
+  }
+});
+
+// Website enquiries: look up the person who wrote in, by their email (1 credit
+// when found): title, seniority, LinkedIn profile, location and employer. The
+// employer's domain also confirms the company's website.
+router.post('/:id/inbound/lookup-person', async (req: AuthRequest, res: Response) => {
+  try {
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    const { signals, saved } = apolloSignals(lead);
+    if (signals.leadType !== 'inbound_form' || !signals.inbound?.email) return res.status(400).json({ error: 'Not a website enquiry' });
+    if (saved.enquirer) return res.json({ enquirer: saved.enquirer, alreadyRevealed: true });
+    const person = await apollo.revealByEmail(signals.inbound.email);
+    if (!person) {
+      // Remember the miss so nobody pays to ask again.
+      const enquirer = { notFound: true, checkedAt: new Date().toISOString() };
+      await prisma.lead.update({ where: { id: lead.id }, data: { signals: { ...signals, apollo: { ...saved, enquirer } } } });
+      return res.json({ enquirer });
+    }
+    const enquirer = { ...person, isEnquirer: true };
+    // A personal email hid the company; Apollo's record names their employer.
+    const employer = !signals.inbound.company && person.organization ? person.organization : null;
+    const nextSignals = {
+      ...signals,
+      ...(employer ? { inbound: { ...signals.inbound, company: employer }, companyChecked: false } : {}),
+      apollo: { ...saved, enquirer },
+      activity: logActivity(signals, req, 'reveal', `Looked up ${person.name || 'the enquirer'} in Apollo`),
+    };
+    const verified = withVerifiedDomain(lead, nextSignals, person.organizationDomain, 'From the enquirer’s Apollo record');
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        ...verified.data,
+        ...(employer && !signals.inbound.businessEmail ? { companyName: employer } : {}),
+        signals: verified.signals,
+      },
+    });
+    res.json({ enquirer });
   } catch (error) {
     apolloFailure(res, error);
   }
