@@ -1,14 +1,14 @@
 // Re-check saved LinkedIn-post leads with the current rules
 // (src/lib/linkedinFilters.js) and delete those that are job ads, recruiting
 // or self-promotion (e.g. a freelancer or agency advertising) rather than
-// someone asking to buy a service. Each post is judged on its full public
+// someone asking to buy a service, or whose post has since been deleted. Each post is judged on its full public
 // text when it can be read (free), else on the search snippet.
 // Safe to run repeatedly. DRY_RUN=1 lists what would be deleted.
 const path = require('node:path');
 const { PrismaClient } = require('@prisma/client');
 const { classifyLinkedInPost } = require(path.join(__dirname, '..', 'src', 'lib', 'linkedinFilters.js'));
 const { findRequirementDetails } = require(path.join(__dirname, '..', 'src', 'lib', 'requirementDetails.js'));
-const { fetchLinkedInPost, requirementFromPost } = require(path.join(__dirname, '..', 'src', 'lib', 'linkedinPost.js'));
+const { readLinkedInPost, requirementFromPost } = require(path.join(__dirname, '..', 'src', 'lib', 'linkedinPost.js'));
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -29,8 +29,13 @@ async function main() {
   const valid = [];
   for (const lead of linkedInLeads) {
     // The full public post when it can be read: snippets hide job ads and adverts.
-    const post = await fetchLinkedInPost(lead.signals.tavilyUrl).catch(() => null);
+    const { post, removed } = await readLinkedInPost(lead.signals.tavilyUrl);
     await pause(400);
+    // Deleted on LinkedIn: search engines still list it, but there is no one to reply to.
+    if (removed) {
+      invalid.push({ ...lead, reason: 'post deleted on LinkedIn' });
+      continue;
+    }
     const verdict = classifyLinkedInPost(lead.signals.tavilyUrl, post ? post.body : lead.signals.searchContext || '');
     if (!verdict.ok) invalid.push({ ...lead, reason: `${verdict.reason}${post ? '' : ' (from the snippet)'}` });
     else valid.push({ ...lead, post });

@@ -6,7 +6,7 @@ import industryConfig from '../config/industries.json';
 import { findPublishedDate } from '../lib/publishedDate';
 import { findCompanyProfile } from '../lib/companyProfile';
 import { classifyLinkedInPost } from '../lib/linkedinFilters';
-import { fetchLinkedInPost, requirementFromPost } from '../lib/linkedinPost';
+import { readLinkedInPost, requirementFromPost } from '../lib/linkedinPost';
 import { findRequirementDetails } from '../lib/requirementDetails';
 import { searchWeb } from '../lib/searchProviders';
 import { searchNews } from '../lib/freeSources';
@@ -754,15 +754,24 @@ async function saveLinkedInLead(search, result, seenCompanies) {
     return false;
   }
 
-  // The search snippet passed: check the full public post too (free), which
-  // shows job ads and agency adverts the snippet hides.
-  const post = await fetchLinkedInPost(url).catch(() => null);
-  if (post) {
-    const full = classifyLinkedInPost(url, post.body);
-    if (!full.ok) {
-      console.log(`   ⏭️  Skipped LinkedIn post (${full.reason}, full post): ${url}`);
-      return false;
-    }
+  // The search snippet passed: now confirm the post on LinkedIn itself (its
+  // public page, free, no login). Search engines keep listing deleted posts for
+  // weeks and their snippets can mix in replies from vendors, so a lead is only
+  // saved from the full post as LinkedIn shows it. A post that can't be read
+  // right now (rate limit, block) is skipped; the next scan finds it again.
+  const { post, removed } = await readLinkedInPost(url);
+  if (removed) {
+    console.log(`   ⏭️  Skipped LinkedIn post (deleted on LinkedIn): ${url}`);
+    return false;
+  }
+  if (!post) {
+    console.log(`   ⏭️  Skipped LinkedIn post (not confirmed on LinkedIn yet, retried next scan): ${url}`);
+    return false;
+  }
+  const full = classifyLinkedInPost(url, post.body);
+  if (!full.ok) {
+    console.log(`   ⏭️  Skipped LinkedIn post (${full.reason}, full post): ${url}`);
+    return false;
   }
 
   const postedAt = linkedInPostDate(url);
@@ -771,14 +780,17 @@ async function saveLinkedInLead(search, result, seenCompanies) {
     return false;
   }
 
-  const author = linkedInAuthor(result);
+  // Name as LinkedIn shows it (credentials like ", MBA" dropped), else from the search result.
+  const author = (post.author && post.author.replace(/,.*$/, '').trim()) || linkedInAuthor(result);
   const key = companyKey(author);
   if (!author || !key || NON_BUYERS.has(key) || seenCompanies.has(key)) return false;
   seenCompanies.add(key);
 
-  const lob = search.lob === 'auto' ? inferLob(text) : search.lob;
-  const industry = classifyIndustry(text);
-  const geo = classifyGeography({ text });
+  // Classify on the post as written, not on the search snippet.
+  const postText = `${result.title || ''} ${post.body}`;
+  const lob = search.lob === 'auto' ? inferLob(postText) : search.lob;
+  const industry = classifyIndustry(postText);
+  const geo = classifyGeography({ text: postText });
   if (geo.region === 'Other') {
     console.log(`   ⏭️  Skipped LinkedIn post (outside target regions): ${url}`);
     return false;
@@ -806,7 +818,7 @@ async function saveLinkedInLead(search, result, seenCompanies) {
           leadType: 'linkedin_post',
           dataSource: 'LinkedIn',
           author,
-          authorProfileUrl: slug ? `https://www.linkedin.com/in/${slug}/` : null,
+          authorProfileUrl: post.authorUrl || (slug ? `https://www.linkedin.com/in/${slug}/` : null),
           postedAt: postedAt ? postedAt.toISOString() : null,
           postedAtSource: postedAt ? 'LinkedIn post ID' : null,
           postedAtChecked: true,
@@ -815,23 +827,19 @@ async function saveLinkedInLead(search, result, seenCompanies) {
           tavilyUrl: url,
           techStack: [],
           sourceTitle: result.title || null,
-          requirement: post ? requirementFromPost(post) : await findRequirementDetails(url, { companyName: author, title: result.title, text }).catch(() => null),
-          ...(post
-            ? {
-                linkedinPost: {
-                  author: post.author,
-                  authorUrl: post.authorUrl,
-                  authorFollowers: post.authorFollowers,
-                  likes: post.likes,
-                  comments: post.comments,
-                  postedAt: post.postedAt,
-                  hashtags: post.hashtags,
-                  isRequest: true,
-                  notRequestReason: null,
-                  fetchedAt: post.fetchedAt,
-                },
-              }
-            : {}),
+          requirement: requirementFromPost(post),
+          linkedinPost: {
+            author: post.author,
+            authorUrl: post.authorUrl,
+            authorFollowers: post.authorFollowers,
+            likes: post.likes,
+            comments: post.comments,
+            postedAt: post.postedAt,
+            hashtags: post.hashtags,
+            isRequest: true,
+            notRequestReason: null,
+            fetchedAt: post.fetchedAt,
+          },
           requirementChecked: true,
           geography: geo.region,
           location: geo.location,

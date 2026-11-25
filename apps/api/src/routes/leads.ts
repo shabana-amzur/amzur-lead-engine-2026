@@ -34,7 +34,7 @@ const { searchNews } = require('../lib/freeSources');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { findAboutDescription } = require('../lib/companyAbout');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { fetchLinkedInPost, requirementFromPost } = require('../lib/linkedinPost');
+const { readLinkedInPost, requirementFromPost } = require('../lib/linkedinPost');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { classifyLinkedInPost } = require('../lib/linkedinFilters');
 
@@ -100,8 +100,10 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         ? matching.filter(inOlderWindow)
         : matching.filter((lead: any) => isRecent(lead.signals?.postedAt, recentDays));
     const inRegion = includeOtherRegions ? recent : recent.filter((lead: any) => lead.signals?.geography !== 'Other');
-    // Job postings found to be closed are no longer worth contacting.
-    const open = includeOlder ? inRegion : inRegion.filter((lead: any) => lead.signals?.jobOpen !== false);
+    // Job postings found to be closed, and LinkedIn posts since deleted, are no longer worth contacting.
+    const open = includeOlder
+      ? inRegion
+      : inRegion.filter((lead: any) => lead.signals?.jobOpen !== false && !lead.signals?.linkedinPost?.removed);
     // Validate every lead against the ICP before it is shown (always current,
     // so older leads are covered without a backfill).
     const checked = open.map(withChecks);
@@ -480,7 +482,19 @@ router.post('/:id/linkedin/refresh', async (req: AuthRequest, res: Response) => 
     const retryUnreadable = cached?.unreadable && Date.now() - new Date(cached.fetchedAt).getTime() > 3600000;
     if (cached?.fetchedAt && !retryUnreadable) return res.json({ linkedinPost: cached });
 
-    const post = await fetchLinkedInPost(signals.tavilyUrl).catch(() => null);
+    const { post, removed } = await readLinkedInPost(signals.tavilyUrl);
+    if (removed) {
+      // LinkedIn says the post no longer exists: the lead came from a search
+      // engine's stale copy. scripts/remove-invalid-linkedin-leads.js deletes these.
+      const linkedinPost = {
+        fetchedAt: new Date().toISOString(),
+        removed: true,
+        isRequest: false,
+        notRequestReason: 'post deleted',
+      };
+      await prisma.lead.update({ where: { id: lead.id }, data: { signals: { ...signals, linkedinPost } } });
+      return res.json({ linkedinPost });
+    }
     if (!post) {
       // Still judge it on the search snippet with the current rules.
       const check = classifyLinkedInPost(signals.tavilyUrl, signals.searchContext || '');

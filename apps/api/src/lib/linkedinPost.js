@@ -67,12 +67,24 @@ function structurePost(body) {
 }
 
 /**
+ * True when LinkedIn says the post no longer exists (deleted by its author or
+ * removed by LinkedIn). Search engines keep showing such posts for weeks, so
+ * a search result alone doesn't prove the post is still there.
+ */
+function isPostRemoved(error) {
+  return !!(error && (error.postRemoved || [404, 410].includes(error.response && error.response.status)));
+}
+
+/**
  * @param {string} url Public LinkedIn post URL.
- * @returns {Promise<object|null>} null when the page can't be read.
+ * @returns {Promise<object|null>} null when the page can't be read (blocked,
+ * rate-limited, no post data). Throws when the request fails; check the error
+ * with isPostRemoved() to tell a deleted post from a temporary failure.
  */
 async function fetchLinkedInPost(url) {
   if (!/^https:\/\/([a-z]{2,3}\.)?(www\.)?linkedin\.com\/posts\//i.test(url || '')) return null;
-  const { data: html } = await axios.get(url, { timeout: TIMEOUT_MS, headers: HEADERS, responseType: 'text', maxRedirects: 3 });
+  const response = await axios.get(url, { timeout: TIMEOUT_MS, headers: HEADERS, responseType: 'text', maxRedirects: 3 });
+  const html = response.data;
   if (typeof html !== 'string') return null;
   let posting = null;
   for (const match of html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)) {
@@ -129,4 +141,16 @@ function requirementFromPost(post) {
   };
 }
 
-module.exports = { fetchLinkedInPost, requirementFromPost, structurePost };
+/**
+ * Read a post without throwing.
+ * @returns {Promise<{ post: object|null, removed: boolean }>}
+ */
+async function readLinkedInPost(url) {
+  try {
+    return { post: await fetchLinkedInPost(url), removed: false };
+  } catch (error) {
+    return { post: null, removed: isPostRemoved(error) };
+  }
+}
+
+module.exports = { fetchLinkedInPost, readLinkedInPost, isPostRemoved, requirementFromPost, structurePost };

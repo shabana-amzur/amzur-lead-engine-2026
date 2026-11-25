@@ -392,7 +392,15 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                 {requirement?.headline || lead.intentSignal || 'Requirement not recorded'}
               </h3>
 
-              {fromLinkedIn && signals.linkedinPost?.isRequest === false && (
+              {fromLinkedIn && signals.linkedinPost?.removed && (
+                <div className="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
+                  <span className="font-medium">This post has been deleted on LinkedIn.</span> It was found through a
+                  search engine that still lists it, so the text below is from that cached copy. There is no post to
+                  reply to: skip this lead. It will be removed in the next cleanup.
+                </div>
+              )}
+
+              {fromLinkedIn && signals.linkedinPost?.isRequest === false && !signals.linkedinPost?.removed && (
                 <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                   <span className="font-medium">Not a request for a provider.</span>{' '}
                   {{

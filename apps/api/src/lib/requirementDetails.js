@@ -164,7 +164,7 @@ async function fromArticle(url, companyName) {
 }
 
 const { findAsk, cleanPostText } = require('./linkedinFilters');
-const { fetchLinkedInPost, requirementFromPost } = require('./linkedinPost');
+const { readLinkedInPost, requirementFromPost } = require('./linkedinPost');
 
 function fromLinkedInPost(text) {
   const body = cleanPostText(text).split(/\s\|\s|\d+ Comments/)[0].trim();
@@ -193,7 +193,7 @@ async function findRequirementDetails(url, context = {}) {
   if (!url) return fromSearchResult(context.title, context.text);
   if (url.includes('linkedin.com/posts/')) {
     // The full public post when it can be read; else the search snippet.
-    const post = await fetchLinkedInPost(url).catch(() => null);
+    const { post } = await readLinkedInPost(url);
     return post ? requirementFromPost(post) : fromLinkedInPost(context.text);
   }
 
