@@ -179,8 +179,11 @@ export default function DashboardPage() {
   // Fetch all leads
   const olderView = activeView === 'older';
   const { data: leadsData, error: leadsError, mutate: refreshLeads } = useSWR(
-    olderView ? `/api/leads?limit=${LEADS_LIMIT}&view=older` : `/api/leads?limit=${LEADS_LIMIT}`,
-    () => leadsAPI.getAll(olderView ? { page: 1, limit: LEADS_LIMIT, view: 'older' } : { page: 1, limit: LEADS_LIMIT }),
+    olderView ? `/api/leads?limit=${LEADS_LIMIT}&view=older` : `/api/leads?limit=${LEADS_LIMIT}&includeInternal=true`,
+    () =>
+      leadsAPI.getAll(
+        olderView ? { page: 1, limit: LEADS_LIMIT, view: 'older' } : { page: 1, limit: LEADS_LIMIT, includeInternal: 'true' }
+      ),
     { keepPreviousData: true }
   );
   // The Older tab's count, from whichever list is loaded (both report it).
@@ -252,7 +255,11 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const leads = leadsData?.leads || [];
+  // Internal tests (forms sent from an Amzur address) appear only under
+  // Website opportunities → Enquiries, never in totals or other lists.
+  const isInternalTest = (lead: any) => lead?.enquiry?.status === 'internal';
+  const internalTests = (leadsData?.leads || []).filter(isInternalTest);
+  const leads = (leadsData?.leads || []).filter((lead: any) => !isInternalTest(lead));
   
   // Calculate metrics
   const totalLeads = leads.length;
@@ -260,7 +267,7 @@ export default function DashboardPage() {
   const highIntentLeads = leads.filter(isHighIntent).length;
   const tenderLeads = leads.filter((l: any) => signalType(l) === 'Tender / RFP');
   const tenders = tenderLeads.length;
-  const websiteEnquiries = leads.filter((l: any) => signalType(l) === 'Website enquiry').length;
+  const websiteEnquiries = leads.filter((l: any) => signalType(l) === 'Website enquiry').length + internalTests.length;
   const hiringLeads = leads.filter((l: any) => signalType(l) === 'Hiring');
   const hiringCompanies = hiringLeads.length;
   const newToday = leads.filter(foundToday).length;
@@ -297,7 +304,9 @@ export default function DashboardPage() {
           ? filters.signal === 'Hiring'
           : filters.quick === card;
 
-  const filteredLeads = leads.filter((lead: any) => matchesFilters(lead, filters));
+  const filteredLeads = (filters.signal === 'Website enquiry' ? [...leads, ...internalTests] : leads).filter((lead: any) =>
+    matchesFilters(lead, filters)
+  );
   const industryCount = (industry: string) => leads.filter((l: any) => (l.industry || 'Other') === industry).length;
 
   // Option counts respect the other active filters, e.g. Industry counts
@@ -687,7 +696,14 @@ export default function DashboardPage() {
                         className="border-b border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
                       >
                         <td className="px-4 py-3 text-sm">
-                          <div className="font-medium text-gray-900">{lead.companyName}</div>
+                          <div className="font-medium text-gray-900">
+                            {lead.companyName}
+                            {isInternalTest(lead) && (
+                              <span className="ml-1.5 text-[10px] font-normal px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 align-middle">
+                                Internal test
+                              </span>
+                            )}
+                          </div>
                           {isLinkedInLead(lead) && (
                             <div className="text-[10px] text-blue-700 mt-0.5">in LinkedIn post · company unknown</div>
                           )}

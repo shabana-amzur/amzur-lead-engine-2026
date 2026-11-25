@@ -122,12 +122,14 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     // Not worth contacting: job postings found to be closed, and LinkedIn posts
     // that were deleted or whose full text shows they aren't a request
     // (awareness posts, adverts, job ads).
+    // Forms sent from an Amzur address are internal tests: left out unless
+    // includeInternal=true (the dashboard lists them under Enquiries only).
+    const includeInternal = req.query.includeInternal === 'true';
     const open = includeOlder
       ? inRegion
       : inRegion.filter(
           (lead: any) =>
-            // Forms sent from an Amzur address are internal tests.
-            !(lead.signals?.leadType === 'inbound_form' && assessEnquiry(lead.signals).status === 'internal') &&
+            (includeInternal || !(lead.signals?.leadType === 'inbound_form' && assessEnquiry(lead.signals).status === 'internal')) &&
             lead.signals?.jobOpen !== false &&
             !lead.signals?.linkedinPost?.removed &&
             lead.signals?.linkedinPost?.isRequest !== false
