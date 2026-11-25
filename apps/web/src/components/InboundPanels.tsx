@@ -302,7 +302,7 @@ export function InboundSummary({
           </div>
           {issue ? (
             <span className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 font-medium">
-              {{ internal: 'Internal test', junk: 'Looks like a test or spam', pitch: 'Sales pitch' }[issue.status as string] || 'Check first'}
+              {{ internal: 'Internal test enquiry', junk: 'Looks like a test or spam', pitch: 'Sales pitch' }[issue.status as string] || 'Check first'}
             </span>
           ) : (
             <span className="text-xs px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 font-medium">Reply within a few hours</span>

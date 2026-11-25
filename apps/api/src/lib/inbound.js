@@ -185,7 +185,7 @@ function assessEnquiry(signals = {}) {
   const inbound = signals.inbound || {};
   const domain = emailDomain(inbound.email);
   if (INTERNAL_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) {
-    return { status: 'internal', reason: `Sent from an Amzur address (${domain}): an internal test` };
+    return { status: 'internal', reason: `Sent from an Amzur address (${domain}): an internal test enquiry` };
   }
   const message = String(inbound.message || '').replace(/\s+/g, ' ').trim();
   const words = message.split(' ').filter((w) => /[a-z]{2,}/i.test(w));

@@ -388,7 +388,7 @@ router.get('/visitors', async (req: Request, res: Response) => {
     const leadName = new Map(
       leads.map((lead) => [
         lead.id,
-        inbound.assessEnquiry(lead.signals || {}).status === 'internal' ? `${lead.companyName} (internal test)` : lead.companyName,
+        inbound.assessEnquiry(lead.signals || {}).status === 'internal' ? `${lead.companyName} (internal test enquiry)` : lead.companyName,
       ])
     );
 
@@ -427,7 +427,7 @@ router.get('/visitors', async (req: Request, res: Response) => {
         visitors: visitors.length,
         returning: visitors.filter((v) => v.sessions > 1).length,
         pageViews: visits.length,
-        formFills: visitors.filter((v) => v.leadId && !/\(internal test\)$/.test(v.leadName || '')).length,
+        formFills: visitors.filter((v) => v.leadId && !/\(internal test enquiry\)$/.test(v.leadName || '')).length,
       },
       sources: [...sourceCounts.entries()]
         .map(([label, ids]) => ({ label, visitors: ids.size }))

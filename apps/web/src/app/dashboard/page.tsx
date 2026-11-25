@@ -700,7 +700,7 @@ export default function DashboardPage() {
                             {lead.companyName}
                             {isInternalTest(lead) && (
                               <span className="ml-1.5 text-[10px] font-normal px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 align-middle">
-                                Internal test
+                                Internal test enquiry
                               </span>
                             )}
                           </div>
