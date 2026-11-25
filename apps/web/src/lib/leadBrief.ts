@@ -780,7 +780,7 @@ export function buildTimeline(lead: any): TimelineEvent[] {
   }
   const funding = s.apollo?.company?.funding;
   if (funding?.latestDate) events.push({ date: funding.latestDate, kind: 'funding', label: `Raised ${funding.latestStage || 'funding'}` });
-  if (lead.discoveredAt) events.push({ date: lead.discoveredAt, kind: 'found', label: 'Found by the Lead Engine' });
+  if (lead.discoveredAt) events.push({ date: lead.discoveredAt, kind: 'found', label: 'Found by the Lead Discovery Engine' });
   for (const c of s.apollo?.contacts || []) {
     if (c.revealedAt) events.push({ date: c.revealedAt, kind: 'contact', label: `Contact revealed: ${c.name}`, detail: c.title || undefined });
   }

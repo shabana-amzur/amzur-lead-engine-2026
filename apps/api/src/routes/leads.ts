@@ -28,7 +28,7 @@ const STATUSES = ['new', 'contacted', 'replied', 'meeting', 'won', 'lost', 'not_
 // Append to the lead's activity log (newest last, capped).
 function logActivity(signals: any, req: AuthRequest, type: string, detail: string) {
   const activity = Array.isArray(signals.activity) ? signals.activity : [];
-  return [...activity, { type, detail, by: req.user?.email || 'Lead Engine user', at: new Date().toISOString() }].slice(-200);
+  return [...activity, { type, detail, by: req.user?.email || 'Lead Discovery Engine user', at: new Date().toISOString() }].slice(-200);
 }
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { searchNews } = require('../lib/freeSources');

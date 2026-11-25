@@ -324,7 +324,7 @@ export default function DashboardPage() {
           <img src="/amzur-logo-white.png" alt="Amzur Technologies" width={150} height={49} className="w-[150px] h-auto" />
           <div className="mt-3 text-sm font-medium text-white flex items-center">
             <span className="inline-block w-2 h-2 rounded-full bg-green-400 mr-2 animate-pulse"></span>
-            Lead Engine
+            Lead Discovery Engine
           </div>
         </div>
         

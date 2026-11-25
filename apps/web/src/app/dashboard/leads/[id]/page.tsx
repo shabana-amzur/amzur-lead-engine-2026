@@ -624,7 +624,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
                   )}
                 </dd>
 
-                <dt className="text-gray-500">Found by Lead Engine</dt>
+                <dt className="text-gray-500">Found by Lead Discovery Engine</dt>
                 <dd className="text-gray-900">{formatDate(lead.discoveredAt)}</dd>
               </dl>
             </section>

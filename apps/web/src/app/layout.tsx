@@ -5,7 +5,7 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Amzur Lead Engine',
+  title: 'Amzur Lead Discovery Engine',
   description: 'Lead discovery and management platform',
 }
 
