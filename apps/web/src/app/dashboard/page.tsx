@@ -206,6 +206,8 @@ export default function DashboardPage() {
   // first visit of the day scans; later visits and "Refresh Results" reload
   // the saved leads. Existing leads show immediately either way.
   const [checking, setChecking] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState('');
   const [refreshMessage, setRefreshMessage] = useState('');
   const checkingRef = useRef(false);
 
@@ -303,6 +305,22 @@ export default function DashboardPage() {
         : card === 'hiring'
           ? filters.signal === 'Hiring'
           : filters.quick === card;
+
+  // Website enquiries can be deleted from the Enquiries list (spam, tests, duplicates).
+  const showingEnquiries = filters.signal === 'Website enquiry';
+  const deleteEnquiry = async (lead: any) => {
+    if (!window.confirm(`Delete the enquiry from ${lead.companyName}? This can't be undone.`)) return;
+    setDeletingId(lead.id);
+    setDeleteError('');
+    try {
+      await leadsAPI.delete(lead.id);
+      await refreshLeads();
+    } catch {
+      setDeleteError(`Couldn't delete the enquiry from ${lead.companyName}. Please try again.`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const filteredLeads = (filters.signal === 'Website enquiry' ? [...leads, ...internalTests] : leads).filter((lead: any) =>
     matchesFilters(lead, filters)
@@ -649,6 +667,10 @@ export default function DashboardPage() {
             </span>
           </div>
 
+          {deleteError && (
+            <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">{deleteError}</div>
+          )}
+
           {/* Table */}
           <div id="opportunities" className="bg-white border border-gray-200 rounded-lg overflow-hidden scroll-mt-4">
             <div className="flex justify-between items-center px-4 py-3 border-b border-gray-200">
@@ -678,6 +700,7 @@ export default function DashboardPage() {
                       <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap" style={{width: '46px'}}>Score</th>
                       <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap" style={{width: '70px'}}>Source</th>
                       <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap" style={{width: '70px'}}>Discovered</th>
+                      {showingEnquiries && <th className="px-4 py-2.5" style={{ width: '60px' }}><span className="sr-only">Actions</span></th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -764,6 +787,23 @@ export default function DashboardPage() {
                         <td className="px-4 py-3 text-xs text-gray-500">
                           {new Date(lead.discoveredAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         </td>
+                        {showingEnquiries && (
+                          <td className="px-4 py-3 text-right">
+                            {signalType(lead) === 'Website enquiry' || isInternalTest(lead) ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteEnquiry(lead);
+                                }}
+                                disabled={deletingId === lead.id}
+                                className="text-xs text-red-600 hover:text-red-800 disabled:text-gray-400"
+                              >
+                                {deletingId === lead.id ? 'Deleting…' : 'Delete'}
+                              </button>
+                            ) : null}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

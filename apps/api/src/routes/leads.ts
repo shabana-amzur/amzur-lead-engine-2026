@@ -254,6 +254,9 @@ router.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response)
     const { id } = req.params;
 
     await prisma.lead.delete({ where: { id } });
+    // Website visits keep a plain leadId (no foreign key): unlink them so the
+    // Website visitors page doesn't point at a lead that no longer exists.
+    await prisma.webVisit.updateMany({ where: { leadId: id }, data: { leadId: null } });
 
     res.json({ message: 'Lead deleted successfully', id });
   } catch (error) {
