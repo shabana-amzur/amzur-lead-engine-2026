@@ -307,16 +307,18 @@ export default function DashboardPage() {
           : filters.quick === card;
 
   // Website enquiries can be deleted from the Enquiries list (spam, tests, duplicates).
+  // Deleting marks the lead "not relevant": it leaves every list but can be recovered,
+  // and needs no login (the app has none; permanent DELETE requires one).
   const showingEnquiries = filters.signal === 'Website enquiry';
   const deleteEnquiry = async (lead: any) => {
-    if (!window.confirm(`Delete the enquiry from ${lead.companyName}? This can't be undone.`)) return;
+    if (!window.confirm(`Delete the enquiry from ${lead.companyName}? It will be removed from all lists.`)) return;
     setDeletingId(lead.id);
     setDeleteError('');
     try {
-      await leadsAPI.delete(lead.id);
+      await leadsAPI.updateWorkflow(lead.id, { status: 'not_relevant', notRelevantReason: 'Deleted from Enquiries' });
       await refreshLeads();
-    } catch {
-      setDeleteError(`Couldn't delete the enquiry from ${lead.companyName}. Please try again.`);
+    } catch (error: any) {
+      setDeleteError(`Couldn't delete the enquiry from ${lead.companyName}${error?.message ? ` (${error.message})` : ''}. Please try again.`);
     } finally {
       setDeletingId(null);
     }
