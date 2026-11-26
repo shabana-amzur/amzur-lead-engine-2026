@@ -33,6 +33,17 @@ const duration = (seconds: number) => {
   return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 };
 
+// "US" -> "United States"; "unknown" -> "Location unknown".
+const regionNames = typeof Intl !== 'undefined' && (Intl as any).DisplayNames ? new (Intl as any).DisplayNames(['en'], { type: 'region' }) : null;
+const countryName = (code: string) => {
+  if (code === 'unknown') return 'Location unknown';
+  try {
+    return regionNames?.of(code) || code;
+  } catch {
+    return code;
+  }
+};
+
 const pageName = (title: string | null, path: string) => (title ? title.replace(/\s*[|–-]\s*Amzur.*$/i, '') : path) || path;
 
 // A ranked list with one thin bar per row (single series: one hue, value labelled).
@@ -59,10 +70,12 @@ function BarList({ rows, unit }: { rows: { key: string; label: string; value: nu
 export default function VisitorsPage() {
   const [days, setDays] = useState(30);
   const [includeAutomated, setIncludeAutomated] = useState(false);
+  const [country, setCountry] = useState('');
   const [page, setPage] = useState(1);
-  const { data, error } = useSWR(`/api/inbound/visitors?days=${days}&automated=${includeAutomated}`, () =>
-    inboundAPI.visitors(days, { includeAutomated })
+  const { data, error } = useSWR(`/api/inbound/visitors?days=${days}&automated=${includeAutomated}&country=${country}`, () =>
+    inboundAPI.visitors(days, { includeAutomated, country })
   );
+  const countries: { code: string; visitors: number }[] = data?.countries || [];
   const totals = data?.totals;
   const visitors: any[] = data?.visitors || [];
   const pageCount = Math.max(1, Math.ceil(visitors.length / PAGE_SIZE));
@@ -84,20 +97,42 @@ export default function VisitorsPage() {
               People browsing amzur.com: where they came from, what they read and who went on to contact Amzur.
             </p>
           </div>
-          <div className="flex rounded-md border border-gray-300 bg-white overflow-hidden text-sm">
-            {RANGES.map((range) => (
-              <button
-                key={range}
-                type="button"
-                onClick={() => {
-                  setDays(range);
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-sm">
+              <span className="sr-only">Country</span>
+              <select
+                value={country}
+                onChange={(e) => {
+                  setCountry(e.target.value);
                   setPage(1);
                 }}
-                className={`px-3 py-1.5 ${days === range ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'}`}
+                className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700"
               >
-                {range} days
-              </button>
-            ))}
+                <option value="">All countries</option>
+                {/* Keep the chosen country listed even if it has no visitors in a new date range. */}
+                {country && !countries.some((c) => c.code === country) && <option value={country}>{countryName(country)} (0)</option>}
+                {countries.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {countryName(c.code)} ({c.visitors.toLocaleString('en-US')})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex rounded-md border border-gray-300 bg-white overflow-hidden text-sm">
+              {RANGES.map((range) => (
+                <button
+                  key={range}
+                  type="button"
+                  onClick={() => {
+                    setDays(range);
+                    setPage(1);
+                  }}
+                  className={`px-3 py-1.5 ${days === range ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'}`}
+                >
+                  {range} days
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -109,7 +144,7 @@ export default function VisitorsPage() {
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
           {[
-            { label: 'Visitors', value: totals?.visitors, note: `in the last ${days} days` },
+            { label: 'Visitors', value: totals?.visitors, note: `in the last ${days} days${country ? ` · ${countryName(country)}` : ''}` },
             { label: 'Returning visitors', value: totals?.returning, note: 'came back more than once' },
             { label: 'Pages read', value: totals?.pageViews, note: 'page views' },
             { label: 'Contacted Amzur', value: totals?.formFills, note: 'filled in the form' },
@@ -191,7 +226,9 @@ export default function VisitorsPage() {
                 {data && visitors.length === 0 && (
                   <tr>
                     <td colSpan={8} className="px-4 py-6 text-center text-gray-500">
-                      No visits recorded in this period. Once the tracker is added to amzur.com, visits appear here.
+                      {country
+                        ? `No visitors from ${countryName(country)} in this period.`
+                        : 'No visits recorded in this period. Once the tracker is added to amzur.com, visits appear here.'}
                     </td>
                   </tr>
                 )}

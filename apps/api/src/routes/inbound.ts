@@ -334,7 +334,23 @@ router.get('/visitors', async (req: Request, res: Response) => {
     for (const v of allVisits) perVisitor.set(v.visitorId, [...(perVisitor.get(v.visitorId) || []), v]);
     const automated = new Set([...perVisitor].filter(([, list]) => inbound.looksAutomated(list)).map(([id]) => id));
     const includeAutomated = req.query.includeAutomated === 'true';
-    const visits = includeAutomated ? allVisits : allVisits.filter((v) => !automated.has(v.visitorId));
+    const humanVisits = includeAutomated ? allVisits : allVisits.filter((v) => !automated.has(v.visitorId));
+
+    // Country filter (ISO code, or "unknown"): a visitor's country is the first
+    // one recorded for them. Counts for the picker ignore the filter itself.
+    const countryOf = new Map<string, string>();
+    for (const v of humanVisits) if (v.country && !countryOf.has(v.visitorId)) countryOf.set(v.visitorId, v.country);
+    const countryCounts = new Map<string, Set<string>>();
+    for (const v of humanVisits) {
+      const code = countryOf.get(v.visitorId) || 'unknown';
+      if (!countryCounts.has(code)) countryCounts.set(code, new Set());
+      countryCounts.get(code)!.add(v.visitorId);
+    }
+    const country = String(req.query.country || '').trim();
+    const countryFilter = country ? (country.toLowerCase() === 'unknown' ? 'unknown' : country.toUpperCase()) : null;
+    const visits = countryFilter
+      ? humanVisits.filter((v) => (countryOf.get(v.visitorId) || 'unknown') === countryFilter)
+      : humanVisits;
 
     const byVisitor = new Map<string, any>();
     const pageCounts = new Map<string, { path: string; title: string | null; views: number; visitors: Set<string> }>();
@@ -423,6 +439,10 @@ router.get('/visitors', async (req: Request, res: Response) => {
 
     res.json({
       days,
+      country: countryFilter,
+      countries: [...countryCounts.entries()]
+        .map(([code, ids]) => ({ code, visitors: ids.size }))
+        .sort((a, b) => b.visitors - a.visitors),
       totals: {
         visitors: visitors.length,
         returning: visitors.filter((v) => v.sessions > 1).length,
